@@ -63,14 +63,14 @@ if uploaded_file:
     st.dataframe(pd.DataFrame(ratings.items(), columns=["Team", "Rating"]).sort_values(by="Rating", ascending=False))
 
 all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
-    st.markdown("---")
-    st.header("Predict a Future Matchup")
+st.markdown("---")
+st.header("Predict a Future Matchup")
 
-    team1 = st.selectbox("Team 1", all_teams)
-    team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
-    home_team = st.selectbox("Home Team", [team1, team2])
+team1 = st.selectbox("Team 1", all_teams)
+team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
+home_team = st.selectbox("Home Team", [team1, team2])
 
-    if st.button("Predict Winner"):
-        prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
-        st.success(f"**{team1}** win probability: **{prob1:.2%}**")
-        st.success(f"**{team2}** win probability: **{prob2:.2%}**")
+if st.button("Predict Winner"):
+    prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
+    st.success(f"**{team1}** win probability: **{prob1:.2%}**")
+    st.success(f"**{team2}** win probability: **{prob2:.2%}**")
