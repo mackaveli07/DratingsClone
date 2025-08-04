@@ -44,33 +44,39 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-def predict_matchup(team1, team2, home_team, elo_ratings):
-    r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
-    if home_team == team1:
-        r1 += HOME_ADVANTAGE
-    elif home_team == team2:
-        r2 += HOME_ADVANTAGE
-    win_prob1 = expected_score(r1, r2)
-    return win_prob1, 1 - win_prob1
+
 
 st.title("NFL Bayesian Elo Prediction")
 
 uploaded_file = st.file_uploader("Upload NFL games CSV", type="csv")
+
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
     ratings = run_elo_pipeline(df)
+
     st.subheader("Final Team Ratings")
     st.dataframe(pd.DataFrame(ratings.items(), columns=["Team", "Rating"]).sort_values(by="Rating", ascending=False))
 
-all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
-st.markdown("---")
-st.header("Predict a Future Matchup")
+    # --- Prediction Section ---
+    def predict_matchup(team1, team2, home_team, elo_ratings):
+        r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
+        if home_team == team1:
+            r1 += HOME_ADVANTAGE
+        elif home_team == team2:
+            r2 += HOME_ADVANTAGE
+        win_prob1 = expected_score(r1, r2)
+        return win_prob1, 1 - win_prob1
 
-team1 = st.selectbox("Team 1", all_teams)
-team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
-home_team = st.selectbox("Home Team", [team1, team2])
+    st.markdown("---")
+    st.header("Predict a Future Matchup")
 
-if st.button("Predict Winner"):
-    prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
-    st.success(f"**{team1}** win probability: **{prob1:.2%}**")
-    st.success(f"**{team2}** win probability: **{prob2:.2%}**")
+    all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
+
+    team1 = st.selectbox("Team 1", all_teams)
+    team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
+    home_team = st.selectbox("Home Team", [team1, team2])
+
+    if st.button("Predict Winner"):
+        prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
+        st.success(f"**{team1}** win probability: **{prob1:.2%}**")
+        st.success(f"**{team2}** win probability: **{prob2:.2%}**")
