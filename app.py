@@ -48,7 +48,7 @@ def run_elo_pipeline(df):
 st.title("NFL Bayesian Elo Prediction")
 
 # Load Excel on app start (update the path if needed)
-excel_file_path = "games.xlsx"  # <-- Replace with actual filename
+excel_file_path = "nfl_games.xlsx"  # <-- Replace with actual filename
 try:
     df = load_game_data(excel_file_path)
     ratings = run_elo_pipeline(df)
@@ -60,4 +60,27 @@ try:
     def predict_matchup(team1, team2, home_team, elo_ratings):
         r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
         if home_team == team1:
-            r1 += HOME_ADV_
+            r1 += HOME_ADVANTAGE
+        elif home_team == team2:
+            r2 += HOME_ADVANTAGE
+        win_prob1 = expected_score(r1, r2)
+        return win_prob1, 1 - win_prob1
+
+    st.markdown("---")
+    st.header("Predict a Future Matchup")
+
+    all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
+
+    team1 = st.selectbox("Team 1", all_teams)
+    team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
+    home_team = st.selectbox("Home Team", [team1, team2])
+
+    if st.button("Predict Winner"):
+        prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
+        st.success(f"**{team1}** win probability: **{prob1:.2%}**")
+        st.success(f"**{team2}** win probability: **{prob2:.2%}**")
+
+except FileNotFoundError:
+    st.error(f"Excel file not found at `{excel_file_path}`. Please ensure the file exists.")
+except Exception as e:
+    st.error(f"Error loading data: {e}")
