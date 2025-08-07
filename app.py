@@ -9,7 +9,7 @@ HOME_ADVANTAGE = 65
 REVERSION_FACTOR = 0.75
 
 def load_game_data(file_path):
-    return pd.read_csv(file_path)
+    return pd.read_excel(file_path)  # Changed from read_csv to read_excel
 
 def group_games_by_week(df):
     return df.groupby(["season", "week"])
@@ -44,14 +44,13 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-
-
+# Streamlit App
 st.title("NFL Bayesian Elo Prediction")
 
-uploaded_file = st.file_uploader("Upload NFL games CSV", type="csv")
+uploaded_file = st.file_uploader("Upload NFL games Excel file (.xlsx)", type="xlsx")  # Changed file type
 
 if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+    df = load_game_data(uploaded_file)
     ratings = run_elo_pipeline(df)
 
     st.subheader("Final Team Ratings")
