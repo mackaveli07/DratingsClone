@@ -51,7 +51,9 @@ def probability_to_moneyline(prob):
         return f"+{round(100 * (1 - prob) / prob)}"
 
 # Streamlit App
-st.title("NFL Bayesian Elo Prediction")
+st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
+st.title("🏈 NFL Bayesian Elo Prediction")
+st.caption("Powered by Bayesian Elo ratings based on historical NFL games")
 
 # Load Excel on app start (update the path if needed)
 excel_file_path = "games.xlsx"  # <-- Replace with actual filename
@@ -59,10 +61,30 @@ try:
     df = load_game_data(excel_file_path)
     ratings = run_elo_pipeline(df)
 
-    st.subheader("Final Team Ratings")
-    st.dataframe(pd.DataFrame(ratings.items(), columns=["Team", "Rating"]).sort_values(by="Rating", ascending=False))
+    st.subheader("📊 Final Team Ratings (Bar Chart)")
+    ratings_df = pd.DataFrame(ratings.items(), columns=["Team", "Rating"]).sort_values(by="Rating", ascending=False).set_index("Team")
+    st.bar_chart(ratings_df)
+
+    st.subheader("📋 Team Ratings Table")
+    st.dataframe(ratings_df)
+
+    with st.expander("📜 View Full Game Data"):
+        st.dataframe(df)
 
     # --- Prediction Section ---
+    st.markdown("---")
+    st.header("🔮 Predict a Future Matchup")
+
+    all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        team1 = st.selectbox("Team 1", all_teams)
+    with col2:
+        team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
+
+    home_team = st.selectbox("🏠 Home Team", [team1, team2])
+
     def predict_matchup(team1, team2, home_team, elo_ratings):
         r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
         if home_team == team1:
@@ -72,22 +94,25 @@ try:
         win_prob1 = expected_score(r1, r2)
         return win_prob1, 1 - win_prob1
 
-    st.markdown("---")
-    st.header("Predict a Future Matchup")
-
-    all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
-
-    team1 = st.selectbox("Team 1", all_teams)
-    team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
-    home_team = st.selectbox("Home Team", [team1, team2])
-
     if st.button("Predict Winner"):
         prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
 
-        st.success(f"**{team1}** win probability: **{prob1:.2%}**, Moneyline: {odds1}")
-        st.success(f"**{team2}** win probability: **{prob2:.2%}**, Moneyline: {odds2}")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label=f"{team1} Win Probability", value=f"{prob1:.2%}", delta=f"Moneyline: {odds1}")
+        with col2:
+            st.metric(label=f"{team2} Win Probability", value=f"{prob2:.2%}", delta=f"Moneyline: {odds2}")
+
+        st.markdown("### 🧠 Confidence Level")
+        confidence = abs(prob1 - prob2)
+        if confidence > 0.25:
+            st.success("🔒 High confidence prediction")
+        elif confidence > 0.15:
+            st.info("🔍 Moderate confidence prediction")
+        else:
+            st.warning("⚠️ Low confidence — close matchup")
 
 except FileNotFoundError:
     st.error(f"Excel file not found at `{excel_file_path}`. Please ensure the file exists.")
