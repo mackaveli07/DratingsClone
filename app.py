@@ -44,11 +44,17 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
+def probability_to_moneyline(prob):
+    if prob >= 0.5:
+        return f"-{round(100 * prob / (1 - prob))}"
+    else:
+        return f"+{round(100 * (1 - prob) / prob)}"
+
 # Streamlit App
 st.title("NFL Bayesian Elo Prediction")
 
 # Load Excel on app start (update the path if needed)
-excel_file_path = "games.xlsx"  # <-- Replace with actual filename
+excel_file_path = "nfl_games.xlsx"  # <-- Replace with actual filename
 try:
     df = load_game_data(excel_file_path)
     ratings = run_elo_pipeline(df)
@@ -77,8 +83,11 @@ try:
 
     if st.button("Predict Winner"):
         prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
-        st.success(f"**{team1}** win probability: **{prob1:.2%}**")
-        st.success(f"**{team2}** win probability: **{prob2:.2%}**")
+        odds1 = probability_to_moneyline(prob1)
+        odds2 = probability_to_moneyline(prob2)
+
+        st.success(f"**{team1}** win probability: **{prob1:.2%}**, Moneyline: {odds1}")
+        st.success(f"**{team2}** win probability: **{prob2:.2%}**, Moneyline: {odds2}")
 
 except FileNotFoundError:
     st.error(f"Excel file not found at `{excel_file_path}`. Please ensure the file exists.")
