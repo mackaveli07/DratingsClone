@@ -48,7 +48,7 @@ def run_elo_pipeline(df):
 st.title("NFL Bayesian Elo Prediction")
 
 # Load Excel on app start (update the path if needed)
-excel_file_path = "nfl_games.xlsx"  # <-- Replace with actual filename
+excel_file_path = "games.xlsx"  # <-- Replace with actual filename
 try:
     df = load_game_data(excel_file_path)
     ratings = run_elo_pipeline(df)
