@@ -74,7 +74,7 @@ st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
 st.title("🏈 NFL Bayesian Elo Prediction")
 st.caption("Powered by Bayesian Elo ratings based on historical NFL games")
 
-# Load Excel on app start (update the path if needed)
+# Load Excel on app start
 excel_file_path = "games.xlsx"  # <-- Replace with actual filename
 try:
     df = load_game_data(excel_file_path)
@@ -92,28 +92,27 @@ try:
 
     # --- Prediction Section ---
     st.markdown("---")
-    st.header("🔮 Predict a Future Matchup")
+    st.header("🔮 Predict a 2025 Regular Season Matchup")
 
-    all_teams = sorted(ratings.keys(), key=lambda x: ratings[x], reverse=True)
+    # Filter games for 2025 regular season
+    season_2025_games = df[(df['season'] == 2025) & (df['week'] <= 18)]
+    game_options = season_2025_games[['week', 'team1', 'team2', 'home_team']].apply(lambda x: f"Week {x['week']}: {x['team1']} vs {x['team2']}", axis=1).tolist()
+    selected_game = st.selectbox("Select Game", game_options)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        team1 = st.selectbox("Team 1", all_teams)
-    with col2:
-        team2 = st.selectbox("Team 2", [t for t in all_teams if t != team1])
+    if selected_game:
+        week_str, teams_str = selected_game.split(": ")
+        team1, team2 = teams_str.split(" vs ")
+        home_team = season_2025_games[(season_2025_games['team1'] == team1) & (season_2025_games['team2'] == team2)]['home_team'].values[0]
 
-    home_team = st.selectbox("🏠 Home Team", [team1, team2])
+        def predict_matchup(team1, team2, home_team, elo_ratings):
+            r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
+            if home_team == team1:
+                r1 += HOME_ADVANTAGE
+            elif home_team == team2:
+                r2 += HOME_ADVANTAGE
+            win_prob1 = expected_score(r1, r2)
+            return win_prob1, 1 - win_prob1
 
-    def predict_matchup(team1, team2, home_team, elo_ratings):
-        r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
-        if home_team == team1:
-            r1 += HOME_ADVANTAGE
-        elif home_team == team2:
-            r2 += HOME_ADVANTAGE
-        win_prob1 = expected_score(r1, r2)
-        return win_prob1, 1 - win_prob1
-
-    if st.button("Predict Winner"):
         prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
