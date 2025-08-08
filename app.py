@@ -8,8 +8,8 @@ K = 20
 HOME_ADVANTAGE = 65
 REVERSION_FACTOR = 0.75
 
-def load_game_data(file_path):
-    return pd.read_excel(file_path)  # Reads Excel on startup
+def load_game_data(file_path, sheet_name):
+    return pd.read_excel(file_path, sheet_name=sheet_name)
 
 def group_games_by_week(df):
     return df.groupby(["season", "week"])
@@ -74,11 +74,12 @@ st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
 st.title("🏈 NFL Bayesian Elo Prediction")
 st.caption("Powered by Bayesian Elo ratings based on historical NFL games")
 
-# Load Excel on app start
 excel_file_path = "games.xlsx"  # <-- Replace with actual filename
 try:
-    df = load_game_data(excel_file_path)
-    ratings = run_elo_pipeline(df)
+    historical_df = load_game_data(excel_file_path, sheet_name="games")
+    schedule_2025_df = load_game_data(excel_file_path, sheet_name="2025 schedule")
+
+    ratings = run_elo_pipeline(historical_df)
 
     st.subheader("📊 Final Team Ratings (Bar Chart)")
     ratings_df = pd.DataFrame(ratings.items(), columns=["Team", "Rating"]).sort_values(by="Rating", ascending=False).set_index("Team")
@@ -87,22 +88,25 @@ try:
     st.subheader("📋 Team Ratings Table")
     st.dataframe(ratings_df)
 
-    with st.expander("📜 View Full Game Data"):
-        st.dataframe(df)
+    with st.expander("📜 View Historical Game Data"):
+        st.dataframe(historical_df)
 
-    # --- Prediction Section ---
     st.markdown("---")
     st.header("🔮 Predict a 2025 Regular Season Matchup")
 
-    # Filter games for 2025 regular season
-    season_2025_games = df[(df['season'] == 2025) & (df['week'] <= 18)]
-    game_options = season_2025_games[['week', 'team1', 'team2', 'home_team']].apply(lambda x: f"Week {x['week']}: {x['team1']} vs {x['team2']}", axis=1).tolist()
+    season_2025_games = schedule_2025_df[schedule_2025_df['week'] <= 18]
+    game_options = season_2025_games.apply(
+        lambda x: f"Week {x['week']}: {x['team1']} vs {x['team2']}", axis=1
+    ).tolist()
+
     selected_game = st.selectbox("Select Game", game_options)
 
     if selected_game:
         week_str, teams_str = selected_game.split(": ")
         team1, team2 = teams_str.split(" vs ")
-        home_team = season_2025_games[(season_2025_games['team1'] == team1) & (season_2025_games['team2'] == team2)]['home_team'].values[0]
+        home_team = season_2025_games[
+            (season_2025_games['team1'] == team1) & (season_2025_games['team2'] == team2)
+        ]['home_team'].values[0]
 
         def predict_matchup(team1, team2, home_team, elo_ratings):
             r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
@@ -117,7 +121,6 @@ try:
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
 
-        # Get live odds from VegasInsider
         live_odds_df = get_vegasinsider_odds()
         live_odds_team1 = find_team_odds(team1, live_odds_df)
         live_odds_team2 = find_team_odds(team2, live_odds_df)
@@ -137,7 +140,6 @@ try:
         else:
             st.warning("⚠️ Low confidence — close matchup")
 
-        # Value bet alerts
         st.markdown("### 💰 Value Bet Analysis")
         if live_odds_team1 != "N/A" and live_odds_team2 != "N/A":
             try:
