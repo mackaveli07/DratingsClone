@@ -50,6 +50,25 @@ def probability_to_moneyline(prob):
     else:
         return f"+{round(100 * (1 - prob) / prob)}"
 
+def get_vegasinsider_odds():
+    url = "https://www.vegasinsider.com/nfl/odds/money-line/"
+    try:
+        tables = pd.read_html(url)
+        odds_df = tables[0]
+        odds_df.columns = odds_df.columns.droplevel(0)
+        odds_df = odds_df.rename(columns={"Matchup": "Matchup", "Consensus": "Consensus"})
+        return odds_df
+    except Exception as e:
+        st.error(f"Error scraping VegasInsider odds: {e}")
+        return pd.DataFrame()
+
+def find_team_odds(team_name, odds_df):
+    for _, row in odds_df.iterrows():
+        matchup = row["Matchup"]
+        if team_name in matchup:
+            return row["Consensus"]
+    return "N/A"
+
 # Streamlit App
 st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
 st.title("🏈 NFL Bayesian Elo Prediction")
@@ -99,11 +118,16 @@ try:
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
 
+        # Get live odds from VegasInsider
+        live_odds_df = get_vegasinsider_odds()
+        live_odds_team1 = find_team_odds(team1, live_odds_df)
+        live_odds_team2 = find_team_odds(team2, live_odds_df)
+
         col1, col2 = st.columns(2)
         with col1:
-            st.metric(label=f"{team1} Win Probability", value=f"{prob1:.2%}", delta=f"Moneyline: {odds1}")
+            st.metric(label=f"{team1} Win Probability", value=f"{prob1:.2%}", delta=f"Pred ML: {odds1} | Live ML: {live_odds_team1}")
         with col2:
-            st.metric(label=f"{team2} Win Probability", value=f"{prob2:.2%}", delta=f"Moneyline: {odds2}")
+            st.metric(label=f"{team2} Win Probability", value=f"{prob2:.2%}", delta=f"Pred ML: {odds2} | Live ML: {live_odds_team2}")
 
         st.markdown("### 🧠 Confidence Level")
         confidence = abs(prob1 - prob2)
@@ -113,6 +137,21 @@ try:
             st.info("🔍 Moderate confidence prediction")
         else:
             st.warning("⚠️ Low confidence — close matchup")
+
+        # Value bet alerts
+        st.markdown("### 💰 Value Bet Analysis")
+        if live_odds_team1 != "N/A" and live_odds_team2 != "N/A":
+            try:
+                pred1_val = int(odds1.replace('+','').replace('-',''))
+                live1_val = int(str(live_odds_team1).replace('+','').replace('-',''))
+                if (odds1.startswith('-') and pred1_val < live1_val) or (odds1.startswith('+') and pred1_val > live1_val):
+                    st.success(f"✅ Value on {team1}")
+                pred2_val = int(odds2.replace('+','').replace('-',''))
+                live2_val = int(str(live_odds_team2).replace('+','').replace('-',''))
+                if (odds2.startswith('-') and pred2_val < live2_val) or (odds2.startswith('+') and pred2_val > live2_val):
+                    st.success(f"✅ Value on {team2}")
+            except:
+                st.warning("⚠️ Could not compare odds numerically")
 
 except FileNotFoundError:
     st.error(f"Excel file not found at `{excel_file_path}`. Please ensure the file exists.")
