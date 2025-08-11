@@ -2,16 +2,18 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+import requests
 
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
 
-def load_game_data(file_path, sheet_name):
-    return pd.read_excel(file_path, sheet_name=sheet_name)
+API_KEY = "YOUR_API_KEY_HERE"  # Replace with your TheOddsAPI key
+SPORT_KEY = "americanfootball_nfl"
+REGION = "us"
+MARKETS = "h2h,spreads"
 
-def group_games_by_week(df):
-    return df.groupby(["season", "week"])
+# --- Elo functions ---
 
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
@@ -29,16 +31,18 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     actual1 = 1 if score1 > score2 else 0
     actual2 = 1 - actual1
 
-    elo_ratings[team1] = elo_ratings[team1] + K * (actual1 - expected1)
-    elo_ratings[team2] = elo_ratings[team2] + K * (actual2 - expected2)
+    elo_ratings[team1] += K * (actual1 - expected1)
+    elo_ratings[team2] += K * (actual2 - expected2)
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
-    grouped = group_games_by_week(df)
+    grouped = df.groupby(["season", "week"])
     for (season, week), games in grouped:
         for _, row in games.iterrows():
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
+
+# --- Odds conversion helpers ---
 
 def probability_to_moneyline(prob):
     if prob >= 0.5:
@@ -47,19 +51,19 @@ def probability_to_moneyline(prob):
         return f"+{round(100 * (1 - prob) / prob)}"
 
 def moneyline_to_probability(ml):
-    ml_str = str(ml)
-    if ml_str.startswith('-'):
-        ml_val = int(ml_str.replace('-', ''))
-        return ml_val / (ml_val + 100)
-    elif ml_str.startswith('+'):
-        ml_val = int(ml_str.replace('+', ''))
-        return 100 / (ml_val + 100)
-    else:
-        try:
+    try:
+        ml_str = str(ml)
+        if ml_str.startswith('-'):
+            ml_val = int(ml_str.replace('-', ''))
+            return ml_val / (ml_val + 100)
+        elif ml_str.startswith('+'):
+            ml_val = int(ml_str.replace('+', ''))
+            return 100 / (ml_val + 100)
+        else:
             ml_val = int(ml_str)
             return 100 / (ml_val + 100)
-        except:
-            return 0.5  # fallback
+    except:
+        return 0.5
 
 def probability_to_spread(prob, team_is_favorite=True):
     b = 0.23
@@ -86,40 +90,97 @@ def format_edge_text(edge):
         return f'<span style="color:red;">({edge:.2%} negative edge)</span>'
     return ""
 
-# --- OddsShark integration ---
+# --- TheOddsAPI integration ---
 
-def get_oddsshark_odds():
-    url = "https://www.oddsshark.com/nfl/odds"
+def get_theoddsapi_odds():
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
+    params = {
+        "apiKey": API_KEY,
+        "regions": REGION,
+        "markets": MARKETS,
+        "oddsFormat": "american",
+        "dateFormat": "iso"
+    }
     try:
-        tables = pd.read_html(url)
-        # OddsShark has multiple tables, the first is usually the main odds table
-        odds_df = tables[0]
-        return odds_df
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data
     except Exception as e:
-        st.error(f"Error scraping OddsShark: {e}")
-        return pd.DataFrame()
+        st.error(f"Failed to fetch odds from TheOddsAPI: {e}")
+        return []
 
-def find_team_line_odds_shark(team_name, odds_df, column):
-    # OddsShark uses 'Teams' column with matchups like "TeamA TeamB"
-    team_name_lower = team_name.lower()
-    for _, row in odds_df.iterrows():
-        teams_str = str(row.get("Teams", "")).lower()
-        if team_name_lower in teams_str:
-            # Return the value from requested column
-            val = row.get(column, "N/A")
-            return val
-    return "N/A"
+def parse_odds_data(api_data):
+    odds_dict = {}
+    for game in api_data:
+        teams = game.get("teams", [])
+        if len(teams) != 2:
+            continue
+        team1, team2 = teams
+        odds_dict_key = (team1.lower(), team2.lower())
+        bookmakers = game.get("bookmakers", [])
+        if not bookmakers:
+            continue
+        bookmaker = bookmakers[0]
+        markets = bookmaker.get("markets", [])
+        ml_odds = {}
+        spread_odds = {}
+
+        for market in markets:
+            if market["key"] == "h2h":
+                for outcome in market["outcomes"]:
+                    ml_odds[outcome["name"].lower()] = outcome["price"]
+            elif market["key"] == "spreads":
+                for outcome in market["outcomes"]:
+                    spread_odds[outcome["name"].lower()] = outcome["point"]
+
+        odds_dict[odds_dict_key] = {
+            "moneyline": ml_odds,
+            "spread": spread_odds
+        }
+    return odds_dict
+
+def find_odds_for_team(team_name, opponent_name, odds_dict):
+    key = (team_name.lower(), opponent_name.lower())
+    if key in odds_dict:
+        return odds_dict[key]
+    key_rev = (opponent_name.lower(), team_name.lower())
+    if key_rev in odds_dict:
+        ml = odds_dict[key_rev]["moneyline"]
+        sp = odds_dict[key_rev]["spread"]
+        reversed_ml = {
+            team_name.lower(): ml.get(team_name.lower(), "N/A"),
+            opponent_name.lower(): ml.get(opponent_name.lower(), "N/A"),
+        }
+        reversed_sp = {
+            team_name.lower(): sp.get(team_name.lower(), "N/A"),
+            opponent_name.lower(): sp.get(opponent_name.lower(), "N/A"),
+        }
+        return {"moneyline": reversed_ml, "spread": reversed_sp}
+    return {"moneyline": {}, "spread": {}}
+
+# --- Prediction function ---
+
+def predict_matchup(team1, team2, home_team, elo_ratings):
+    r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
+    if home_team == team1:
+        r1 += HOME_ADVANTAGE
+    elif home_team == team2:
+        r2 += HOME_ADVANTAGE
+    win_prob1 = expected_score(r1, r2)
+    return win_prob1, 1 - win_prob1
 
 # --- Streamlit app ---
 
-st.set_page_config(page_title="NFL Elo Predictor with OddsShark", layout="wide")
-st.title("🏈 NFL Bayesian Elo Prediction + OddsShark Live Odds")
-st.caption("Powered by Bayesian Elo ratings and live odds from OddsShark.com")
+st.set_page_config(page_title="NFL Elo Predictor + TheOddsAPI", layout="wide")
+st.title("🏈 NFL Bayesian Elo Prediction + TheOddsAPI Live Odds")
+st.caption("Powered by Bayesian Elo ratings and live odds from TheOddsAPI.com")
 
 excel_file_path = "games.xlsx"
+
 try:
-    historical_df = load_game_data(excel_file_path, sheet_name="games")
-    schedule_2025_df = load_game_data(excel_file_path, sheet_name="2025 schedule")
+    historical_df = pd.read_excel(excel_file_path, sheet_name="games")
+    schedule_2025_df = pd.read_excel(excel_file_path, sheet_name="2025 schedule")
 
     ratings = run_elo_pipeline(historical_df)
 
@@ -150,28 +211,23 @@ try:
             (season_2025_games['team1'] == team1) & (season_2025_games['team2'] == team2)
         ]['home_team'].values[0]
 
-        def predict_matchup(team1, team2, home_team, elo_ratings):
-            r1, r2 = elo_ratings.get(team1, BASE_ELO), elo_ratings.get(team2, BASE_ELO)
-            if home_team == team1:
-                r1 += HOME_ADVANTAGE
-            elif home_team == team2:
-                r2 += HOME_ADVANTAGE
-            win_prob1 = expected_score(r1, r2)
-            return win_prob1, 1 - win_prob1
-
         prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
         spread1 = probability_to_spread(prob1, prob1 > prob2)
         spread2 = probability_to_spread(prob2, prob2 > prob1)
 
-        # Fetch live odds from OddsShark
-        odds_df = get_oddsshark_odds()
+        api_data = get_theoddsapi_odds()
+        odds_dict = parse_odds_data(api_data)
 
-        live_ml_team1 = find_team_line_odds_shark(team1, odds_df, "Moneyline")
-        live_ml_team2 = find_team_line_odds_shark(team2, odds_df, "Moneyline")
-        live_spread_team1 = find_team_line_odds_shark(team1, odds_df, "Spread")
-        live_spread_team2 = find_team_line_odds_shark(team2, odds_df, "Spread")
+        odds = find_odds_for_team(team1, team2, odds_dict)
+        ml_odds = odds.get("moneyline", {})
+        spread_odds = odds.get("spread", {})
+
+        live_ml_team1 = ml_odds.get(team1.lower(), "N/A")
+        live_ml_team2 = ml_odds.get(team2.lower(), "N/A")
+        live_spread_team1 = spread_odds.get(team1.lower(), "N/A")
+        live_spread_team2 = spread_odds.get(team2.lower(), "N/A")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -198,7 +254,6 @@ try:
 
         st.markdown("### 💰 Value Bet Analysis")
 
-        # Moneyline value check
         try:
             vegas_prob1 = moneyline_to_probability(live_ml_team1)
             edge1 = prob1 - vegas_prob1
@@ -214,7 +269,6 @@ try:
         except:
             st.warning("⚠️ Could not compare moneylines numerically")
 
-        # Spread value check
         try:
             def parse_spread(s):
                 if isinstance(s, str):
