@@ -8,7 +8,7 @@ BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
 
-API_KEY = "YOUR_API_KEY_HERE"  # Replace with your TheOddsAPI key
+API_KEY = "4c39fd0413dbcc55279d85ab18bcc6f0"  # Replace with your TheOddsAPI key
 SPORT_KEY = "americanfootball_nfl"
 REGION = "us"
 MARKETS = "h2h,spreads"
