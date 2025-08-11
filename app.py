@@ -50,23 +50,46 @@ def probability_to_moneyline(prob):
     else:
         return f"+{round(100 * (1 - prob) / prob)}"
 
-def get_vegasinsider_odds():
-    url = "https://www.vegasinsider.com/nfl/odds/money-line/"
+def moneyline_to_probability(ml):
+    """Convert moneyline odds to implied probability."""
+    ml = int(str(ml).replace('+','').replace('-',''))
+    if str(ml).startswith('-'):
+        return ml / (ml + 100)
+    else:
+        return 100 / (ml + 100)
+
+def probability_to_spread(prob, team_is_favorite=True):
+    b = 0.23
+    prob = max(min(prob, 0.999), 0.001)
+    spread = np.log(prob / (1 - prob)) / b
+    spread = round(spread * 2) / 2
+    if not team_is_favorite:
+        spread = -spread
+    if spread == 0:
+        return "PK"
+    return spread
+
+def spread_to_probability(spread):
+    b = 0.23
+    spread_calc = -spread
+    prob = 1 / (1 + np.exp(-b * spread_calc))
+    return prob
+
+def get_vegasinsider_odds(url):
     try:
         tables = pd.read_html(url)
         odds_df = tables[0]
         odds_df.columns = odds_df.columns.droplevel(0)
-        odds_df = odds_df.rename(columns={"Matchup": "Matchup", "Consensus": "Consensus"})
         return odds_df
     except Exception as e:
-        st.error(f"Error scraping VegasInsider odds: {e}")
+        st.error(f"Error scraping {url}: {e}")
         return pd.DataFrame()
 
-def find_team_odds(team_name, odds_df):
+def find_team_line(team_name, odds_df, column):
     for _, row in odds_df.iterrows():
-        matchup = row["Matchup"]
+        matchup = row.get("Matchup", "")
         if team_name in matchup:
-            return row["Consensus"]
+            return row.get(column, "N/A")
     return "N/A"
 
 # Streamlit App
@@ -74,7 +97,7 @@ st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
 st.title("🏈 NFL Bayesian Elo Prediction")
 st.caption("Powered by Bayesian Elo ratings based on historical NFL games")
 
-excel_file_path = "games.xlsx"  # <-- Replace with actual filename
+excel_file_path = "games.xlsx"
 try:
     historical_df = load_game_data(excel_file_path, sheet_name="games")
     schedule_2025_df = load_game_data(excel_file_path, sheet_name="2025 schedule")
@@ -120,16 +143,31 @@ try:
         prob1, prob2 = predict_matchup(team1, team2, home_team, ratings)
         odds1 = probability_to_moneyline(prob1)
         odds2 = probability_to_moneyline(prob2)
+        spread1 = probability_to_spread(prob1, prob1 > prob2)
+        spread2 = probability_to_spread(prob2, prob2 > prob1)
 
-        live_odds_df = get_vegasinsider_odds()
-        live_odds_team1 = find_team_odds(team1, live_odds_df)
-        live_odds_team2 = find_team_odds(team2, live_odds_df)
+        # Live odds
+        ml_df = get_vegasinsider_odds("https://www.vegasinsider.com/nfl/odds/money-line/")
+        spread_df = get_vegasinsider_odds("https://www.vegasinsider.com/nfl/odds/pointspread/")
+
+        live_ml_team1 = find_team_line(team1, ml_df, "Consensus")
+        live_ml_team2 = find_team_line(team2, ml_df, "Consensus")
+        live_spread_team1 = find_team_line(team1, spread_df, "Consensus")
+        live_spread_team2 = find_team_line(team2, spread_df, "Consensus")
 
         col1, col2 = st.columns(2)
         with col1:
-            st.metric(label=f"{team1} Win Probability", value=f"{prob1:.2%}", delta=f"Pred ML: {odds1} | Live ML: {live_odds_team1}")
+            st.metric(
+                label=f"{team1} Win Probability",
+                value=f"{prob1:.2%}",
+                delta=f"Pred ML: {odds1} | Spread: {spread1} | Live ML: {live_ml_team1} | Live Spread: {live_spread_team1}"
+            )
         with col2:
-            st.metric(label=f"{team2} Win Probability", value=f"{prob2:.2%}", delta=f"Pred ML: {odds2} | Live ML: {live_odds_team2}")
+            st.metric(
+                label=f"{team2} Win Probability",
+                value=f"{prob2:.2%}",
+                delta=f"Pred ML: {odds2} | Spread: {spread2} | Live ML: {live_ml_team2} | Live Spread: {live_spread_team2}"
+            )
 
         st.markdown("### 🧠 Confidence Level")
         confidence = abs(prob1 - prob2)
@@ -141,20 +179,38 @@ try:
             st.warning("⚠️ Low confidence — close matchup")
 
         st.markdown("### 💰 Value Bet Analysis")
-        if live_odds_team1 != "N/A" and live_odds_team2 != "N/A":
-            try:
-                pred1_val = int(odds1.replace('+','').replace('-',''))
-                live1_val = int(str(live_odds_team1).replace('+','').replace('-',''))
-                if (odds1.startswith('-') and pred1_val < live1_val) or (odds1.startswith('+') and pred1_val > live1_val):
-                    st.success(f"✅ Value on {team1}")
-                pred2_val = int(odds2.replace('+','').replace('-',''))
-                live2_val = int(str(live_odds_team2).replace('+','').replace('-',''))
-                if (odds2.startswith('-') and pred2_val < live2_val) or (odds2.startswith('+') and pred2_val > live2_val):
-                    st.success(f"✅ Value on {team2}")
-            except:
-                st.warning("⚠️ Could not compare odds numerically")
+
+        # Moneyline value check with edge %
+        try:
+            vegas_prob1 = moneyline_to_probability(live_ml_team1)
+            edge1 = prob1 - vegas_prob1
+            if edge1 > 0.02:
+                st.success(f"✅ ML Value on {team1} (+{edge1:.1%} edge)")
+
+            vegas_prob2 = moneyline_to_probability(live_ml_team2)
+            edge2 = prob2 - vegas_prob2
+            if edge2 > 0.02:
+                st.success(f"✅ ML Value on {team2} (+{edge2:.1%} edge)")
+        except:
+            st.warning("⚠️ Could not compare moneylines numerically")
+
+        # Spread value check with edge %
+        try:
+            vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
+            vegas_prob1_spread = spread_to_probability(vegas_spread1)
+            spread_edge1 = prob1 - vegas_prob1_spread
+            if spread_edge1 > 0.02:
+                st.success(f"📏 Spread Value on {team1} (+{spread_edge1:.1%} edge)")
+
+            vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
+            vegas_prob2_spread = spread_to_probability(vegas_spread2)
+            spread_edge2 = prob2 - vegas_prob2_spread
+            if spread_edge2 > 0.02:
+                st.success(f"📏 Spread Value on {team2} (+{spread_edge2:.1%} edge)")
+        except:
+            st.warning("⚠️ Could not compare spreads numerically")
 
 except FileNotFoundError:
-    st.error(f"Excel file not found at `{excel_file_path}`. Please ensure the file exists.")
+    st.error(f"Excel file not found at `{excel_file_path}`.")
 except Exception as e:
     st.error(f"Error loading data: {e}")
