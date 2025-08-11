@@ -178,7 +178,7 @@ try:
         else:
             st.warning("⚠️ Low confidence — close matchup")
 
-       st.markdown("### 💰 Value Bet Analysis")
+    st.markdown("### 💰 Value Bet Analysis")
 
             # Moneyline value check with edge % and colors
             try:
