@@ -52,11 +52,17 @@ def probability_to_moneyline(prob):
 
 def moneyline_to_probability(ml):
     """Convert moneyline odds to implied probability."""
-    ml = int(str(ml).replace('+','').replace('-',''))
-    if str(ml).startswith('-'):
-        return ml / (ml + 100)
+    ml_str = str(ml)
+    if ml_str.startswith('-'):
+        ml_val = int(ml_str.replace('-', ''))
+        return ml_val / (ml_val + 100)
+    elif ml_str.startswith('+'):
+        ml_val = int(ml_str.replace('+', ''))
+        return 100 / (ml_val + 100)
     else:
-        return 100 / (ml + 100)
+        # Assume positive moneyline if no sign
+        ml_val = int(ml_str)
+        return 100 / (ml_val + 100)
 
 def probability_to_spread(prob, team_is_favorite=True):
     b = 0.23
@@ -91,6 +97,15 @@ def find_team_line(team_name, odds_df, column):
         if team_name in matchup:
             return row.get(column, "N/A")
     return "N/A"
+
+def format_edge_text(edge):
+    # This is a helper to format edges with colors, define it if you want
+    threshold = 0.05
+    if edge > threshold:
+        return f'<span style="color:green;">(+{edge:.2%} edge)</span>'
+    elif edge < -threshold:
+        return f'<span style="color:red;">({edge:.2%} negative edge)</span>'
+    return ""
 
 # Streamlit App
 st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
@@ -178,38 +193,43 @@ try:
         else:
             st.warning("⚠️ Low confidence — close matchup")
 
-    st.markdown("### 💰 Value Bet Analysis")
+        st.markdown("### 💰 Value Bet Analysis")
 
-            # Moneyline value check with edge % and colors
-            try:
-                vegas_prob1 = moneyline_to_probability(live_ml_team1)
-                edge1 = prob1 - vegas_prob1
-                edge_text1 = format_edge_text(edge1)
-                if edge_text1:
-                    st.markdown(f"✅ ML Value on {team1} {edge_text1}", unsafe_allow_html=True)
-            
-                vegas_prob2 = moneyline_to_probability(live_ml_team2)
-                edge2 = prob2 - vegas_prob2
-                edge_text2 = format_edge_text(edge2)
-                if edge_text2:
-                    st.markdown(f"✅ ML Value on {team2} {edge_text2}", unsafe_allow_html=True)
-            except:
-                st.warning("⚠️ Could not compare moneylines numerically")
-            
-            # Spread value check with edge % and colors
-            try:
-                vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
-                vegas_prob1_spread = spread_to_probability(vegas_spread1)
-                spread_edge1 = prob1 - vegas_prob1_spread
-                edge_text_s1 = format_edge_text(spread_edge1)
-                if edge_text_s1:
-                    st.markdown(f"📏 Spread Value on {team1} {edge_text_s1}", unsafe_allow_html=True)
-            
-                vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
-                vegas_prob2_spread = spread_to_probability(vegas_spread2)
-                spread_edge2 = prob2 - vegas_prob2_spread
-                edge_text_s2 = format_edge_text(spread_edge2)
-                if edge_text_s2:
-                    st.markdown(f"📏 Spread Value on {team2} {edge_text_s2}", unsafe_allow_html=True)
-            except:
-                st.warning("⚠️ Could not compare spreads numerically")
+        # Moneyline value check with edge % and colors
+        try:
+            vegas_prob1 = moneyline_to_probability(live_ml_team1)
+            edge1 = prob1 - vegas_prob1
+            edge_text1 = format_edge_text(edge1)
+            if edge_text1:
+                st.markdown(f"✅ ML Value on {team1} {edge_text1}", unsafe_allow_html=True)
+
+            vegas_prob2 = moneyline_to_probability(live_ml_team2)
+            edge2 = prob2 - vegas_prob2
+            edge_text2 = format_edge_text(edge2)
+            if edge_text2:
+                st.markdown(f"✅ ML Value on {team2} {edge_text2}", unsafe_allow_html=True)
+        except:
+            st.warning("⚠️ Could not compare moneylines numerically")
+
+        # Spread value check with edge % and colors
+        try:
+            vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
+            vegas_prob1_spread = spread_to_probability(vegas_spread1)
+            spread_edge1 = prob1 - vegas_prob1_spread
+            edge_text_s1 = format_edge_text(spread_edge1)
+            if edge_text_s1:
+                st.markdown(f"📏 Spread Value on {team1} {edge_text_s1}", unsafe_allow_html=True)
+
+            vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
+            vegas_prob2_spread = spread_to_probability(vegas_spread2)
+            spread_edge2 = prob2 - vegas_prob2_spread
+            edge_text_s2 = format_edge_text(spread_edge2)
+            if edge_text_s2:
+                st.markdown(f"📏 Spread Value on {team2} {edge_text_s2}", unsafe_allow_html=True)
+        except:
+            st.warning("⚠️ Could not compare spreads numerically")
+
+except FileNotFoundError:
+    st.error(f"File not found: {excel_file_path}")
+except Exception as e:
+    st.error(f"An error occurred: {e}")
