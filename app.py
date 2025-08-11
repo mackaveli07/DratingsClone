@@ -180,36 +180,36 @@ try:
 
        st.markdown("### 💰 Value Bet Analysis")
 
-# Moneyline value check with edge % and colors
-try:
-    vegas_prob1 = moneyline_to_probability(live_ml_team1)
-    edge1 = prob1 - vegas_prob1
-    edge_text1 = format_edge_text(edge1)
-    if edge_text1:
-        st.markdown(f"✅ ML Value on {team1} {edge_text1}", unsafe_allow_html=True)
-
-    vegas_prob2 = moneyline_to_probability(live_ml_team2)
-    edge2 = prob2 - vegas_prob2
-    edge_text2 = format_edge_text(edge2)
-    if edge_text2:
-        st.markdown(f"✅ ML Value on {team2} {edge_text2}", unsafe_allow_html=True)
-except:
-    st.warning("⚠️ Could not compare moneylines numerically")
-
-# Spread value check with edge % and colors
-try:
-    vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
-    vegas_prob1_spread = spread_to_probability(vegas_spread1)
-    spread_edge1 = prob1 - vegas_prob1_spread
-    edge_text_s1 = format_edge_text(spread_edge1)
-    if edge_text_s1:
-        st.markdown(f"📏 Spread Value on {team1} {edge_text_s1}", unsafe_allow_html=True)
-
-    vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
-    vegas_prob2_spread = spread_to_probability(vegas_spread2)
-    spread_edge2 = prob2 - vegas_prob2_spread
-    edge_text_s2 = format_edge_text(spread_edge2)
-    if edge_text_s2:
-        st.markdown(f"📏 Spread Value on {team2} {edge_text_s2}", unsafe_allow_html=True)
-except:
-    st.warning("⚠️ Could not compare spreads numerically")
+            # Moneyline value check with edge % and colors
+            try:
+                vegas_prob1 = moneyline_to_probability(live_ml_team1)
+                edge1 = prob1 - vegas_prob1
+                edge_text1 = format_edge_text(edge1)
+                if edge_text1:
+                    st.markdown(f"✅ ML Value on {team1} {edge_text1}", unsafe_allow_html=True)
+            
+                vegas_prob2 = moneyline_to_probability(live_ml_team2)
+                edge2 = prob2 - vegas_prob2
+                edge_text2 = format_edge_text(edge2)
+                if edge_text2:
+                    st.markdown(f"✅ ML Value on {team2} {edge_text2}", unsafe_allow_html=True)
+            except:
+                st.warning("⚠️ Could not compare moneylines numerically")
+            
+            # Spread value check with edge % and colors
+            try:
+                vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
+                vegas_prob1_spread = spread_to_probability(vegas_spread1)
+                spread_edge1 = prob1 - vegas_prob1_spread
+                edge_text_s1 = format_edge_text(spread_edge1)
+                if edge_text_s1:
+                    st.markdown(f"📏 Spread Value on {team1} {edge_text_s1}", unsafe_allow_html=True)
+            
+                vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
+                vegas_prob2_spread = spread_to_probability(vegas_spread2)
+                spread_edge2 = prob2 - vegas_prob2_spread
+                edge_text_s2 = format_edge_text(spread_edge2)
+                if edge_text_s2:
+                    st.markdown(f"📏 Spread Value on {team2} {edge_text_s2}", unsafe_allow_html=True)
+            except:
+                st.warning("⚠️ Could not compare spreads numerically")
