@@ -6,7 +6,6 @@ from collections import defaultdict
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
-REVERSION_FACTOR = 0.75
 
 def load_game_data(file_path, sheet_name):
     return pd.read_excel(file_path, sheet_name=sheet_name)
@@ -30,11 +29,8 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     actual1 = 1 if score1 > score2 else 0
     actual2 = 1 - actual1
 
-    new_r1 = elo_ratings[team1] + K * (actual1 - expected1)
-    new_r2 = elo_ratings[team2] + K * (actual2 - expected2)
-
-    elo_ratings[team1] = new_r1
-    elo_ratings[team2] = new_r2
+    elo_ratings[team1] = elo_ratings[team1] + K * (actual1 - expected1)
+    elo_ratings[team2] = elo_ratings[team2] + K * (actual2 - expected2)
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
@@ -51,7 +47,6 @@ def probability_to_moneyline(prob):
         return f"+{round(100 * (1 - prob) / prob)}"
 
 def moneyline_to_probability(ml):
-    """Convert moneyline odds to implied probability."""
     ml_str = str(ml)
     if ml_str.startswith('-'):
         ml_val = int(ml_str.replace('-', ''))
@@ -60,9 +55,11 @@ def moneyline_to_probability(ml):
         ml_val = int(ml_str.replace('+', ''))
         return 100 / (ml_val + 100)
     else:
-        # Assume positive moneyline if no sign
-        ml_val = int(ml_str)
-        return 100 / (ml_val + 100)
+        try:
+            ml_val = int(ml_str)
+            return 100 / (ml_val + 100)
+        except:
+            return 0.5  # fallback
 
 def probability_to_spread(prob, team_is_favorite=True):
     b = 0.23
@@ -81,25 +78,7 @@ def spread_to_probability(spread):
     prob = 1 / (1 + np.exp(-b * spread_calc))
     return prob
 
-def get_vegasinsider_odds(url):
-    try:
-        tables = pd.read_html(url)
-        odds_df = tables[0]
-        odds_df.columns = odds_df.columns.droplevel(0)
-        return odds_df
-    except Exception as e:
-        st.error(f"Error scraping {url}: {e}")
-        return pd.DataFrame()
-
-def find_team_line(team_name, odds_df, column):
-    for _, row in odds_df.iterrows():
-        matchup = row.get("Matchup", "")
-        if team_name in matchup:
-            return row.get(column, "N/A")
-    return "N/A"
-
 def format_edge_text(edge):
-    # This is a helper to format edges with colors, define it if you want
     threshold = 0.05
     if edge > threshold:
         return f'<span style="color:green;">(+{edge:.2%} edge)</span>'
@@ -107,10 +86,35 @@ def format_edge_text(edge):
         return f'<span style="color:red;">({edge:.2%} negative edge)</span>'
     return ""
 
-# Streamlit App
-st.set_page_config(page_title="NFL Elo Predictor", layout="wide")
-st.title("🏈 NFL Bayesian Elo Prediction")
-st.caption("Powered by Bayesian Elo ratings based on historical NFL games")
+# --- OddsShark integration ---
+
+def get_oddsshark_odds():
+    url = "https://www.oddsshark.com/nfl/odds"
+    try:
+        tables = pd.read_html(url)
+        # OddsShark has multiple tables, the first is usually the main odds table
+        odds_df = tables[0]
+        return odds_df
+    except Exception as e:
+        st.error(f"Error scraping OddsShark: {e}")
+        return pd.DataFrame()
+
+def find_team_line_odds_shark(team_name, odds_df, column):
+    # OddsShark uses 'Teams' column with matchups like "TeamA TeamB"
+    team_name_lower = team_name.lower()
+    for _, row in odds_df.iterrows():
+        teams_str = str(row.get("Teams", "")).lower()
+        if team_name_lower in teams_str:
+            # Return the value from requested column
+            val = row.get(column, "N/A")
+            return val
+    return "N/A"
+
+# --- Streamlit app ---
+
+st.set_page_config(page_title="NFL Elo Predictor with OddsShark", layout="wide")
+st.title("🏈 NFL Bayesian Elo Prediction + OddsShark Live Odds")
+st.caption("Powered by Bayesian Elo ratings and live odds from OddsShark.com")
 
 excel_file_path = "games.xlsx"
 try:
@@ -161,14 +165,13 @@ try:
         spread1 = probability_to_spread(prob1, prob1 > prob2)
         spread2 = probability_to_spread(prob2, prob2 > prob1)
 
-        # Live odds
-        ml_df = get_vegasinsider_odds("https://www.vegasinsider.com/nfl/odds/money-line/")
-        spread_df = get_vegasinsider_odds("https://www.vegasinsider.com/nfl/odds/pointspread/")
+        # Fetch live odds from OddsShark
+        odds_df = get_oddsshark_odds()
 
-        live_ml_team1 = find_team_line(team1, ml_df, "Consensus")
-        live_ml_team2 = find_team_line(team2, ml_df, "Consensus")
-        live_spread_team1 = find_team_line(team1, spread_df, "Consensus")
-        live_spread_team2 = find_team_line(team2, spread_df, "Consensus")
+        live_ml_team1 = find_team_line_odds_shark(team1, odds_df, "Moneyline")
+        live_ml_team2 = find_team_line_odds_shark(team2, odds_df, "Moneyline")
+        live_spread_team1 = find_team_line_odds_shark(team1, odds_df, "Spread")
+        live_spread_team2 = find_team_line_odds_shark(team2, odds_df, "Spread")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -195,7 +198,7 @@ try:
 
         st.markdown("### 💰 Value Bet Analysis")
 
-        # Moneyline value check with edge % and colors
+        # Moneyline value check
         try:
             vegas_prob1 = moneyline_to_probability(live_ml_team1)
             edge1 = prob1 - vegas_prob1
@@ -211,16 +214,20 @@ try:
         except:
             st.warning("⚠️ Could not compare moneylines numerically")
 
-        # Spread value check with edge % and colors
+        # Spread value check
         try:
-            vegas_spread1 = float(str(live_spread_team1).replace('½', '.5'))
+            def parse_spread(s):
+                if isinstance(s, str):
+                    s = s.replace('½', '.5').replace('+', '').replace('-', '')
+                return float(s)
+            vegas_spread1 = parse_spread(live_spread_team1)
             vegas_prob1_spread = spread_to_probability(vegas_spread1)
             spread_edge1 = prob1 - vegas_prob1_spread
             edge_text_s1 = format_edge_text(spread_edge1)
             if edge_text_s1:
                 st.markdown(f"📏 Spread Value on {team1} {edge_text_s1}", unsafe_allow_html=True)
 
-            vegas_spread2 = float(str(live_spread_team2).replace('½', '.5'))
+            vegas_spread2 = parse_spread(live_spread_team2)
             vegas_prob2_spread = spread_to_probability(vegas_spread2)
             spread_edge2 = prob2 - vegas_prob2_spread
             edge_text_s2 = format_edge_text(spread_edge2)
