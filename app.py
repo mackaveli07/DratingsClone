@@ -427,4 +427,4 @@ else:
     else:
         st.info("No value bets found for this week.")
 
-st.markdown()
+
