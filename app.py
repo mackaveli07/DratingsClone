@@ -17,7 +17,7 @@ API_KEY = "YOUR_API_KEY_HERE"  # <-- REPLACE with your TheOddsAPI key
 SPORT_KEY = "americanfootball_nfl"
 REGION = "us"
 MARKETS = "h2h,spreads"
-BOOKMAKER_PREFERENCE = None  # optional: set to a bookmaker key string if desired
+BOOKMAKER_PREFERENCE = None
 
 BASE_ELO = 1500
 K = 20
@@ -209,7 +209,11 @@ CARD_CSS = """
 </style>
 """
 
-def render_matchup_card(team_home, team_away, logos, odds_book, prob_home, prob_away, predicted_spread, live_ml_home, live_ml_away, live_spread_home, live_spread_away):
+def render_matchup_card(team_home, team_away, logos, odds_book,
+                        prob_home, prob_away,
+                        predicted_spread_home, predicted_spread_away,
+                        live_ml_home, live_ml_away,
+                        live_spread_home, live_spread_away):
     implied_home = moneyline_to_probability(live_ml_home)
     implied_away = moneyline_to_probability(live_ml_away)
     edge_home = None if implied_home is None else (prob_home - implied_home)
@@ -219,39 +223,39 @@ def render_matchup_card(team_home, team_away, logos, odds_book, prob_home, prob_
     st.markdown("<div class='matchup-card'>", unsafe_allow_html=True)
 
     cols = st.columns([1,1])
-    # Left / Away team
+
+    # Left / Away (home on right per your request)
     with cols[0]:
-        logo_url = logos.get(team_away.lower(), "")
+        logo_url_away = logos.get(team_away.lower(), "")
         st.markdown(
-            f"<div class='team-block'>"
-            f"<img src='{logo_url}' width='56' style='border-radius:6px'/>"
+            f"<div class='team-block' style='justify-content:flex-start'>"
+            f"<img src='{logo_url_away}' width='56' style='border-radius:6px'/> "
             f"<div><div class='team-name'>{team_away}</div>"
-            f"<div class='small-muted'>ML: <span class='ml-badge'>{live_ml_away}</span> | Spread: <strong>{live_spread_away}</strong></div></div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        pct = prob_away if prob_away is not None else 0.5
-        fill_color = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
-        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>", unsafe_allow_html=True)
+            f"<div class='small-muted'>ML: <span class='ml-badge'>{live_ml_away}</span> | Spread: <strong>{live_spread_away:+}</strong></div>"
+            f"<div class='small-muted'>Predicted Spread: <strong>{predicted_spread_away:+.1f}</strong></div>"
+            f"</div></div>", unsafe_allow_html=True)
+
+        pct_away = prob_away if prob_away is not None else 0.5
+        fill_color_away = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct_away*100:.1f}%; background:{fill_color_away}'></div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='small-muted'>{(prob_away*100):.1f}% win probability</div>" if prob_away is not None else "", unsafe_allow_html=True)
 
-    # Right / Home team
+    # Right / Home
     with cols[1]:
-        logo_url2 = logos.get(team_home.lower(), "")
+        logo_url_home = logos.get(team_home.lower(), "")
         st.markdown(
             f"<div class='team-block' style='justify-content:flex-end'>"
             f"<div><div class='team-name' style='text-align:right'>{team_home}</div>"
-            f"<div class='small-muted' style='text-align:right'>ML: <span class='ml-badge'>{live_ml_home}</span> | Spread: <strong>{live_spread_home}</strong></div></div>"
-            f"<img src='{logo_url2}' width='56' style='border-radius:6px'/>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        pct2 = prob_home if prob_home is not None else 0.5
-        fill_color2 = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
-        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct2*100:.1f}%; background:{fill_color2}'></div></div>", unsafe_allow_html=True)
+            f"<div class='small-muted' style='text-align:right'>ML: <span class='ml-badge'>{live_ml_home}</span> | Spread: <strong>{live_spread_home:+}</strong></div>"
+            f"<div class='small-muted' style='text-align:right'>Predicted Spread: <strong>{predicted_spread_home:+.1f}</strong></div>"
+            f"</div> <img src='{logo_url_home}' width='56' style='border-radius:6px'/></div>", unsafe_allow_html=True)
+
+        pct_home = prob_home if prob_home is not None else 0.5
+        fill_color_home = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct_home*100:.1f}%; background:{fill_color_home}'></div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='small-muted' style='text-align:right'>{(prob_home*100):.1f}% win probability</div>" if prob_home is not None else "", unsafe_allow_html=True)
 
-    st.markdown(f"<div style='margin-top:8px'><strong>Predicted Spread (home perspective):</strong> {predicted_spread:+.1f} &nbsp;&nbsp; <span class='bookmaker'>Bookmaker: {odds_book}</span></div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='margin-top:8px'><span class='bookmaker'>Bookmaker: {odds_book}</span></div>", unsafe_allow_html=True)
 
     edge_html = ""
     if edge_home is not None:
@@ -269,6 +273,7 @@ st.set_page_config(page_title="NFL Elo + TheOddsAPI — Matchup Cards", layout="
 st.title("🏈 NFL Elo Betting Dashboard (Matchup Cards)")
 st.caption("Elo predictions + live odds from TheOddsAPI — value bets highlighted")
 
+# Load Excel
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
@@ -317,14 +322,8 @@ else:
         try:
             api_data = get_theoddsapi_odds(API_KEY)
             odds_index = parse_odds_data(api_data)
-        except requests.exceptions.HTTPError as e:
-            st.warning(f"HTTP error fetching odds: {e}")
-            odds_index = {}
-        except requests.exceptions.RequestException as e:
-            st.warning(f"Network error fetching odds: {e}")
-            odds_index = {}
         except Exception as e:
-            st.warning(f"Unexpected error fetching odds: {e}")
+            st.error(f"Could not fetch odds: {e}")
             odds_index = {}
 
     for _, row in week_games.iterrows():
@@ -338,6 +337,8 @@ else:
         prob2 = 1 - prob1
 
         predicted_spread = probability_to_spread(prob1, team_is_favorite=(prob1 > prob2))
+        predicted_spread_home = -abs(predicted_spread) if prob1 > prob2 else abs(predicted_spread)
+        predicted_spread_away = -abs(predicted_spread) if prob2 > prob1 else abs(predicted_spread)
 
         live_ml_team1 = live_ml_team2 = live_spread_team1 = live_spread_team2 = "N/A"
         bookmaker_title = "N/A"
@@ -358,17 +359,14 @@ else:
                 live_spread_team2 = sp.get(team2.lower(), next(iter(sp.values()), "N/A"))
 
         render_matchup_card(
-            team_home=home_team,
-            team_away=team2 if home_team == team1 else team1,
+            team_home=team1,
+            team_away=team2,
             logos=TEAM_LOGOS,
             odds_book=bookmaker_title,
-            prob_home=prob1 if home_team == team1 else prob2,
-            prob_away=prob2 if home_team == team1 else prob1,
-            predicted_spread=predicted_spread,
-            live_ml_home=live_ml_team1 if home_team == team1 else live_ml_team2,
-            live_ml_away=live_ml_team2 if home_team == team1 else live_ml_team1,
-            live_spread_home=live_spread_team1 if home_team == team1 else live_spread_team2,
-            live_spread_away=live_spread_team2 if home_team == team1 else live_spread_team1,
-        )
+            prob_home=prob1,
+            prob_away=prob2,
+            predicted_spread_home=predicted_spread_home,
+            predicted_spread_away=predicted_spread_away,
+            live_ml_home=live)
 
-st.markdown
+st.markdown()
