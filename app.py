@@ -358,7 +358,7 @@ else:
                 live_spread_team1 = sp.get(team1.lower(), next(iter(sp.values()), "N/A"))
                 live_spread_team2 = sp.get(team2.lower(), next(iter(sp.values()), "N/A"))
 
-        render_matchup_card(
+         render_matchup_card(
             team_home=team1,
             team_away=team2,
             logos=TEAM_LOGOS,
@@ -367,6 +367,10 @@ else:
             prob_away=prob2,
             predicted_spread_home=predicted_spread_home,
             predicted_spread_away=predicted_spread_away,
-            live_ml_home=live)
+            live_ml_home=live_ml_team1,
+            live_ml_away=live_ml_team2,
+            live_spread_home=live_spread_team1,
+            live_spread_away=live_spread_team2,
+        )
 
 st.markdown()
