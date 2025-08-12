@@ -366,4 +366,4 @@ else:
         # Render card with away team on left, home team on right
         render_matchup_card(
             team_home=home_team,
-            team_away=away_team
+            team_away=away_team)
