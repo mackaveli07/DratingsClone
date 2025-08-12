@@ -17,7 +17,7 @@ API_KEY = "YOUR_API_KEY_HERE"  # <-- Replace with your TheOddsAPI key
 SPORT_KEY = "americanfootball_nfl"
 REGION = "us"
 MARKETS = "h2h,spreads"
-BOOKMAKER_PREFERENCE = None  # optional
+BOOKMAKER_PREFERENCE = None
 
 BASE_ELO = 1500
 K = 20
@@ -138,11 +138,9 @@ def moneyline_to_probability(ml):
 def probability_to_moneyline(prob):
     if prob is None: return "N/A"
     if prob >= 0.5:
-        ml = round(-100 * prob / (1 - prob))
-        return f"{ml}"
+        return f"-{round(100 * prob / (1 - prob))}"
     else:
-        ml = round(100 * (1 - prob) / prob)
-        return f"+{ml}"
+        return f"+{round(100 * (1 - prob) / prob)}"
 
 def probability_to_spread(prob, team_is_favorite=True):
     b = 0.23
@@ -204,86 +202,64 @@ CARD_CSS = """
 .prob-fill{height:10px;}
 .ml-badge{font-weight:700;padding:6px 8px;border-radius:6px;background:#f3f4f6;}
 .bookmaker{font-size:11px;color:#666;margin-left:8px;}
+.value-badge{display:inline-block;padding:4px 8px;border-radius:6px;background:#d4f9d4;color:#0b6623;font-weight:700;margin-left:6px;}
 </style>
 """
 
-def render_matchup_card(
-    team_home, team_away, logos, odds_book,
-    prob_home, prob_away, predicted_spread,
-    predicted_ml_home, predicted_ml_away,
-    live_ml_home, live_ml_away,
-    live_spread_home, live_spread_away
-):
-    implied_home = moneyline_to_probability(live_ml_home)
-    implied_away = moneyline_to_probability(live_ml_away)
-    edge_home = None if implied_home is None else (prob_home - implied_home)
-    edge_away = None if implied_away is None else (prob_away - implied_away)
-
+def render_matchup_card(team_home, team_away, logos, odds_book,
+                        prob_home, prob_away, predicted_spread,
+                        predicted_ml_home, predicted_ml_away,
+                        live_ml_home, live_ml_away,
+                        live_spread_home, live_spread_away,
+                        edge_home=None, edge_away=None,
+                        is_value_home=False, is_value_away=False):
     st.markdown(CARD_CSS, unsafe_allow_html=True)
     st.markdown("<div class='matchup-card'>", unsafe_allow_html=True)
 
     cols = st.columns([1,1])
-    # Left / Away team (away on left)
-    with cols[0]:
-        logo_url = logos.get(team_away.lower(), "")
-        st.markdown(
-            f"<div class='team-block'>"
-            f"<img src='{logo_url}' width='56' style='border-radius:6px'/>"
-            f"<div>"
-            f"<div class='team-name'>{team_away}</div>"
-            f"<div class='small-muted'>"
-            f"Pred ML: <span class='ml-badge'>{predicted_ml_away}</span> | "
-            f"Pred Spread: <strong>{-predicted_spread:+.1f}</strong><br>"
-            f"Live ML: <span class='ml-badge'>{live_ml_away}</span> | "
-            f"Live Spread: <strong>{live_spread_away}</strong>"
-            f"</div>"
-            f"</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        pct = prob_away if prob_away is not None else 0.5
-        fill_color = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
-        st.markdown(
-            f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"<div class='small-muted'>{(prob_away*100):.1f}% win probability</div>" if prob_away is not None else "",
-            unsafe_allow_html=True,
-        )
-
-    # Right / Home team
+    # Left / Home (on right side as requested)
     with cols[1]:
         logo_url = logos.get(team_home.lower(), "")
+        value_badge = '<span class="value-badge">VALUE</span>' if is_value_home else ""
         st.markdown(
             f"<div class='team-block' style='justify-content:flex-end'>"
-            f"<div>"
-            f"<div class='team-name' style='text-align:right'>{team_home}</div>"
+            f"<div><div class='team-name' style='text-align:right'>{team_home} {value_badge}</div>"
             f"<div class='small-muted' style='text-align:right'>"
-            f"Pred ML: <span class='ml-badge'>{predicted_ml_home}</span> | "
-            f"Pred Spread: <strong>{predicted_spread:+.1f}</strong><br>"
-            f"Live ML: <span class='ml-badge'>{live_ml_home}</span> | "
-            f"Live Spread: <strong>{live_spread_home}</strong>"
-            f"</div>"
-            f"</div>"
-            f"<img src='{logo_url}' width='56' style='border-radius:6px'/>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+            f"Model ML: <span class='ml-badge'>{predicted_ml_home}</span> | "
+            f"Live ML: <span class='ml-badge'>{live_ml_home}</span><br>"
+            f"Model Spread: <strong>{-predicted_spread:.1f}</strong> | "
+            f"Live Spread: <strong>{-float(live_spread_home) if live_spread_home != 'N/A' else 'N/A'}</strong>"
+            f"</div></div> "
+            f"<img src='{logo_url}' width='56' style='border-radius:6px'/></div>",
+            unsafe_allow_html=True)
+
         pct = prob_home if prob_home is not None else 0.5
         fill_color = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
-        st.markdown(
-            f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>",
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            f"<div class='small-muted' style='text-align:right'>{(prob_home*100):.1f}% win probability</div>" if prob_home is not None else "",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='small-muted' style='text-align:right'>{(prob_home*100):.1f}% win probability</div>" if prob_home is not None else "", unsafe_allow_html=True)
 
-    st.markdown(
-        f"<div style='margin-top:8px'><strong>Bookmaker:</strong> {odds_book}</div>", unsafe_allow_html=True
-    )
+    # Right / Away (on left side)
+    with cols[0]:
+        logo_url2 = logos.get(team_away.lower(), "")
+        value_badge2 = '<span class="value-badge">VALUE</span>' if is_value_away else ""
+        st.markdown(
+            f"<div class='team-block'>"
+            f"<img src='{logo_url2}' width='56' style='border-radius:6px'/> "
+            f"<div><div class='team-name'>{team_away} {value_badge2}</div>"
+            f"<div class='small-muted'>"
+            f"Model ML: <span class='ml-badge'>{predicted_ml_away}</span> | "
+            f"Live ML: <span class='ml-badge'>{live_ml_away}</span><br>"
+            f"Model Spread: <strong>{predicted_spread:.1f}</strong> | "
+            f"Live Spread: <strong>{live_spread_away}</strong>"
+            f"</div></div></div>",
+            unsafe_allow_html=True)
+
+        pct2 = prob_away if prob_away is not None else 0.5
+        fill_color2 = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct2*100:.1f}%; background:{fill_color2}'></div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='small-muted'>{(prob_away*100):.1f}% win probability</div>" if prob_away is not None else "", unsafe_allow_html=True)
+
+    st.markdown(f"<div style='margin-top:8px'><strong>Predicted Spread:</strong> {predicted_spread:+.1f} &nbsp;&nbsp; <span class='bookmaker'>Bookmaker: {odds_book}</span></div>", unsafe_allow_html=True)
 
     edge_html = ""
     if edge_home is not None:
@@ -301,7 +277,6 @@ st.set_page_config(page_title="NFL Elo + TheOddsAPI — Matchup Cards", layout="
 st.title("🏈 NFL Elo Betting Dashboard (Matchup Cards)")
 st.caption("Elo predictions + live odds from TheOddsAPI — value bets highlighted")
 
-# Load Excel
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
@@ -354,6 +329,9 @@ else:
             st.error(f"Could not fetch odds: {e}")
             odds_index = {}
 
+    # Collect value bets to display in summary table
+    value_bets_list = []
+
     for _, row in week_games.iterrows():
         team1 = row['team1']
         team2 = row['team2']
@@ -365,6 +343,7 @@ else:
         prob2 = 1 - prob1
 
         predicted_spread = probability_to_spread(prob1, team_is_favorite=(prob1 > prob2))
+
         predicted_ml_team1 = probability_to_moneyline(prob1)
         predicted_ml_team2 = probability_to_moneyline(prob2)
 
@@ -386,6 +365,39 @@ else:
                 live_spread_team1 = sp.get(team1.lower(), next(iter(sp.values()), "N/A"))
                 live_spread_team2 = sp.get(team2.lower(), next(iter(sp.values()), "N/A"))
 
+        # Compute value edges
+        implied_home_prob = moneyline_to_probability(live_ml_team1)
+        implied_away_prob = moneyline_to_probability(live_ml_team2)
+
+        edge_home = (prob1 - implied_home_prob) if implied_home_prob is not None else None
+        edge_away = (prob2 - implied_away_prob) if implied_away_prob is not None else None
+
+        is_value_home = edge_home is not None and edge_home > 0.05
+        is_value_away = edge_away is not None and edge_away > 0.05
+
+        if is_value_home:
+            value_bets_list.append({
+                "Week": selected_week,
+                "Team": team1,
+                "Opponent": team2,
+                "Edge (%)": f"{edge_home:.1%}",
+                "Market ML": live_ml_team1,
+                "Model Prob": f"{prob1:.2f}",
+                "Bookmaker": bookmaker_title,
+                "Side": "Home"
+            })
+        if is_value_away:
+            value_bets_list.append({
+                "Week": selected_week,
+                "Team": team2,
+                "Opponent": team1,
+                "Edge (%)": f"{edge_away:.1%}",
+                "Market ML": live_ml_team2,
+                "Model Prob": f"{prob2:.2f}",
+                "Bookmaker": bookmaker_title,
+                "Side": "Away"
+            })
+
         render_matchup_card(
             team_home=team1,
             team_away=team2,
@@ -400,7 +412,19 @@ else:
             live_ml_away=live_ml_team2,
             live_spread_home=live_spread_team1,
             live_spread_away=live_spread_team2,
+            edge_home=edge_home,
+            edge_away=edge_away,
+            is_value_home=is_value_home,
+            is_value_away=is_value_away,
         )
 
-st.markdown("---")
-st.caption("Tip: add more team logos to TEAM_LOGOS dict in the script for a nicer UI. You can also override API key in the sidebar.")
+    # Display summary of value bets
+    if value_bets_list:
+        st.markdown("---")
+        st.subheader("💰 Value Bets Summary")
+        df_val = pd.DataFrame(value_bets_list)
+        st.dataframe(df_val, use_container_width=True)
+    else:
+        st.info("No value bets found for this week.")
+
+st.markdown()
