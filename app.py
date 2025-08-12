@@ -198,14 +198,47 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
 ### ---------- CARD CSS & RENDER ----------
 CARD_CSS = """
 <style>
-.matchup-card{border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 18px rgba(0,0,0,0.08);background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,250,250,0.98));}
-.team-block{display:flex;align-items:center;gap:12px;}
-.team-name{font-weight:700;font-size:18px;}
-.small-muted{color:#6b7280;font-size:12px;}
-.prob-bar{height:10px;border-radius:6px;overflow:hidden;background:#eee;margin-top:6px;}
-.prob-fill{height:10px;}
-.ml-badge{font-weight:700;padding:6px 8px;border-radius:6px;background:#f3f4f6;}
-.bookmaker{font-size:11px;color:#666;margin-left:8px;}
+.matchup-card{
+  border-radius:10px;
+  padding:12px;
+  margin-bottom:12px;
+  box-shadow:0 4px 18px rgba(0,0,0,0.08);
+  background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(250,250,250,0.98));
+}
+.team-block{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.team-name{
+  font-weight:700;
+  font-size:18px;
+}
+.small-muted{
+  color:#6b7280;
+  font-size:12px;
+}
+.prob-bar{
+  height:10px;
+  border-radius:6px;
+  overflow:hidden;
+  background:#eee;
+  margin-top:6px;
+}
+.prob-fill{
+  height:10px;
+}
+.ml-badge{
+  font-weight:700;
+  padding:6px 8px;
+  border-radius:6px;
+  background:#f3f4f6;
+}
+.bookmaker{
+  font-size:11px;
+  color:#666;
+  margin-left:8px;
+}
 </style>
 """
 
@@ -219,23 +252,31 @@ def render_matchup_card(team_home, team_away, logos, odds_book, prob_home, prob_
     st.markdown("<div class='matchup-card'>", unsafe_allow_html=True)
 
     cols = st.columns([1,1])
-    # Left / Home
+    # Left side - Away team (we want home on right, so away left)
     with cols[0]:
-        logo_url = logos.get(team_home.lower(), "")
-        st.markdown(f"<div class='team-block'><img src='{logo_url}' width='56' style='border-radius:6px'/> <div><div class='team-name'>{team_home}</div><div class='small-muted'>ML: <span class='ml-badge'>{live_ml_home}</span> | Spread: <strong>{live_spread_home}</strong></div></div></div>", unsafe_allow_html=True)
-        pct = prob_home if prob_home is not None else 0.5
-        fill_color = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
+        logo_url = logos.get(team_away.lower(), "")
+        st.markdown(
+            f"<div class='team-block'><img src='{logo_url}' width='56' style='border-radius:6px'/>"
+            f"<div><div class='team-name'>{team_away}</div>"
+            f"<div class='small-muted'>ML: <span class='ml-badge'>{live_ml_away}</span> | Spread: <strong>{live_spread_away}</strong></div>"
+            f"</div></div>", unsafe_allow_html=True)
+        pct = prob_away if prob_away is not None else 0.5
+        fill_color = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted'>{(prob_home*100):.1f}% win probability</div>" if prob_home is not None else "", unsafe_allow_html=True)
+        st.markdown(f"<div class='small-muted'>{(prob_away*100):.1f}% win probability</div>" if prob_away is not None else "", unsafe_allow_html=True)
 
-    # Right / Away
+    # Right side - Home team
     with cols[1]:
-        logo_url2 = logos.get(team_away.lower(), "")
-        st.markdown(f"<div class='team-block' style='justify-content:flex-end'><div><div class='team-name' style='text-align:right'>{team_away}</div><div class='small-muted' style='text-align:right'>ML: <span class='ml-badge'>{live_ml_away}</span> | Spread: <strong>{live_spread_away}</strong></div></div> <img src='{logo_url2}' width='56' style='border-radius:6px'/></div>", unsafe_allow_html=True)
-        pct2 = prob_away if prob_away is not None else 0.5
-        fill_color2 = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
+        logo_url2 = logos.get(team_home.lower(), "")
+        st.markdown(
+            f"<div class='team-block' style='justify-content:flex-end'>"
+            f"<div><div class='team-name' style='text-align:right'>{team_home}</div>"
+            f"<div class='small-muted' style='text-align:right'>ML: <span class='ml-badge'>{live_ml_home}</span> | Spread: <strong>{live_spread_home}</strong></div>"
+            f"</div> <img src='{logo_url2}' width='56' style='border-radius:6px'/></div>", unsafe_allow_html=True)
+        pct2 = prob_home if prob_home is not None else 0.5
+        fill_color2 = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct2*100:.1f}%; background:{fill_color2}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted' style='text-align:right'>{(prob_away*100):.1f}% win probability</div>" if prob_away is not None else "", unsafe_allow_html=True)
+        st.markdown(f"<div class='small-muted' style='text-align:right'>{(prob_home*100):.1f}% win probability</div>" if prob_home is not None else "", unsafe_allow_html=True)
 
     st.markdown(f"<div style='margin-top:8px'><strong>Predicted Spread:</strong> {predicted_spread:+.1f} &nbsp;&nbsp; <span class='bookmaker'>Bookmaker: {odds_book}</span></div>", unsafe_allow_html=True)
 
