@@ -422,4 +422,85 @@ for idx in range(0, len(week_games), 2):
         team2 = row['team2']
         home_team = row.get('home_team', team1)
 
-        r1 = ratings.get(team1, BASE_ELO) + (HOME_ADVANTAGE if home_team == team1 else 
+        r1 = ratings.get(team1, BASE_ELO) + (HOME_ADVANTAGE if home_team == team1 else 0)
+        r2 = ratings.get(team2, BASE_ELO) + (HOME_ADVANTAGE if home_team == team2 else 0)
+        exp1 = expected_score(r1, r2)
+        exp2 = 1 - exp1
+
+        pred_spread = probability_to_spread(exp1, team_is_favorite=True)
+
+        pred_ml_1 = probability_to_moneyline(exp1)
+        pred_ml_2 = probability_to_moneyline(exp2)
+
+        # Lookup live odds if available
+        odds_key = fuzzy_find_team_in_odds(team1, odds_index.keys())
+        live_ml_1 = live_ml_2 = "N/A"
+        live_spread_1 = live_spread_2 = "N/A"
+        bookmaker_name = "N/A"
+
+        if odds_key:
+            live_ml_1 = odds_index[odds_key]["moneyline"].get(team1.lower(), "N/A")
+            live_ml_2 = odds_index[odds_key]["moneyline"].get(team2.lower(), "N/A")
+            live_spread_1 = odds_index[odds_key]["spread"].get(team1.lower(), "N/A")
+            live_spread_2 = odds_index[odds_key]["spread"].get(team2.lower(), "N/A")
+            bookmaker_name = odds_index[odds_key].get("bookmaker", "N/A")
+
+        # Calculate value edges
+        implied_prob_1 = moneyline_to_probability(live_ml_1)
+        implied_prob_2 = moneyline_to_probability(live_ml_2)
+        edge_1 = (exp1 - implied_prob_1) if implied_prob_1 else None
+        edge_2 = (exp2 - implied_prob_2) if implied_prob_2 else None
+
+        is_value_1 = edge_1 is not None and edge_1 > 0.05
+        is_value_2 = edge_2 is not None and edge_2 > 0.05
+
+        if is_value_1:
+            value_bets.append({"Week": selected_week, "Team": team1, "Opponent": team2,
+                               "Edge": edge_1, "Market ML": live_ml_1, "Model Prob": exp1,
+                               "Bookmaker": bookmaker_name, "Side": "Home"})
+
+        if is_value_2:
+            value_bets.append({"Week": selected_week, "Team": team2, "Opponent": team1,
+                               "Edge": edge_2, "Market ML": live_ml_2, "Model Prob": exp2,
+                               "Bookmaker": bookmaker_name, "Side": "Away"})
+
+        with cols[i]:
+            render_matchup_card(
+                team_home=team1,
+                team_away=team2,
+                logos=TEAM_LOGOS,
+                odds_book=bookmaker_name,
+                prob_home=exp1,
+                prob_away=exp2,
+                predicted_spread=pred_spread,
+                predicted_ml_home=pred_ml_1,
+                predicted_ml_away=pred_ml_2,
+                live_ml_home=live_ml_1,
+                live_ml_away=live_ml_2,
+                live_spread_home=live_spread_1,
+                live_spread_away=live_spread_2,
+                edge_home=edge_1,
+                edge_away=edge_2,
+                is_value_home=is_value_1,
+                is_value_away=is_value_2
+            )
+
+# Show Value Bets Summary table
+st.markdown("---")
+st.subheader("💰 Value Bets Summary")
+if value_bets:
+    df_val = pd.DataFrame(value_bets)
+    df_val["Edge (%)"] = df_val["Edge"].apply(lambda x: f"{x:.1%}")
+    st.dataframe(df_val.style.set_properties(**{
+        "background-color": "#d1fae5",
+        "color": "#065f46",
+        "font-weight": "600"
+    }), use_container_width=True)
+else:
+    st.info("No value bets found for this week.")
+
+st.markdown("""
+<div class="footer">
+    Powered by Elo Ratings & TheOddsAPI | Made with ❤️ by Phil
+</div>
+""", unsafe_allow_html=True)
