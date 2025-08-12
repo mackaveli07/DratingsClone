@@ -21,10 +21,10 @@ HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
 TEAM_LOGOS = {
-    "kansas city chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
-    "san francisco 49ers": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
-    "green bay packers": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
-    "dallas cowboys": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+    "KC": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+    "SF": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+    "GB": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+    "DAL": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
     # Add more teams...
 }
 
