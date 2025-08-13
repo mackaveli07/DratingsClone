@@ -34,11 +34,38 @@ HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
 TEAM_LOGOS = {
-    "kansas city chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
-    "san francisco 49ers": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
-    "green bay packers": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
-    "dallas cowboys": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
-    # add more teams here...
+   "Arizona Cardinals": "https://upload.wikimedia.org/wikipedia/commons/4/47/Arizona_Cardinals_logo.svg",
+    "Atlanta Falcons": "https://upload.wikimedia.org/wikipedia/commons/5/5e/Atlanta_Falcons_logo.svg",
+    "Baltimore Ravens": "https://upload.wikimedia.org/wikipedia/commons/2/2c/Baltimore_Ravens_logo.svg",
+    "Buffalo Bills": "https://upload.wikimedia.org/wikipedia/commons/1/1a/Buffalo_Bills_logo.svg",
+    "Carolina Panthers": "https://upload.wikimedia.org/wikipedia/commons/3/3b/Carolina_Panthers_logo.svg",
+    "Chicago Bears": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Chicago_Bears_logo.svg",
+    "Cincinnati Bengals": "https://upload.wikimedia.org/wikipedia/commons/8/8f/Cincinnati_Bengals_logo.svg",
+    "Cleveland Browns": "https://upload.wikimedia.org/wikipedia/commons/4/4f/Cleveland_Browns_logo.svg",
+    "Dallas Cowboys": "https://upload.wikimedia.org/wikipedia/commons/9/97/Dallas_Cowboys_logo.svg",
+    "Denver Broncos": "https://upload.wikimedia.org/wikipedia/commons/4/44/Denver_Broncos_logo.svg",
+    "Detroit Lions": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Detroit_Lions_logo.svg",
+    "Green Bay Packers": "https://upload.wikimedia.org/wikipedia/commons/5/5c/Green_Bay_Packers_logo.svg",
+    "Houston Texans": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Houston_Texans_logo.svg",
+    "Indianapolis Colts": "https://upload.wikimedia.org/wikipedia/commons/5/5d/Indianapolis_Colts_logo.svg",
+    "Jacksonville Jaguars": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Jacksonville_Jaguars_logo.svg",
+    "Kansas City Chiefs": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Kansas_City_Chiefs_logo.svg",
+    "Las Vegas Raiders": "https://upload.wikimedia.org/wikipedia/commons/5/5c/Las_Vegas_Raiders_logo.svg",
+    "Los Angeles Chargers": "https://upload.wikimedia.org/wikipedia/commons/2/2d/Los_Angeles_Chargers_logo.svg",
+    "Los Angeles Rams": "https://upload.wikimedia.org/wikipedia/commons/5/5a/Los_Angeles_Rams_logo.svg",
+    "Miami Dolphins": "https://upload.wikimedia.org/wikipedia/commons/2/2b/Miami_Dolphins_logo.svg",
+    "Minnesota Vikings": "https://upload.wikimedia.org/wikipedia/commons/6/6b/Minnesota_Vikings_logo.svg",
+    "New England Patriots": "https://upload.wikimedia.org/wikipedia/commons/2/2d/New_England_Patriots_logo.svg",
+    "New Orleans Saints": "https://upload.wikimedia.org/wikipedia/commons/4/4f/New_Orleans_Saints_logo.svg",
+    "New York Giants": "https://upload.wikimedia.org/wikipedia/commons/4/4c/New_York_Giants_logo.svg",
+    "New York Jets": "https://upload.wikimedia.org/wikipedia/commons/2/25/New_York_Jets_logo.svg",
+    "Philadelphia Eagles": "https://upload.wikimedia.org/wikipedia/commons/3/3e/Philadelphia_Eagles_logo.svg",
+    "Pittsburgh Steelers": "https://upload.wikimedia.org/wikipedia/commons/0/0c/Pittsburgh_Steelers_logo.svg",
+    "San Francisco 49ers": "https://upload.wikimedia.org/wikipedia/commons/9/99/San_Francisco_49ers_logo.svg",
+    "Seattle Seahawks": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Seattle_Seahawks_logo.svg",
+    "Tampa Bay Buccaneers": "https://upload.wikimedia.org/wikipedia/commons/4/4a/Tampa_Bay_Buccaneers_logo.svg",
+    "Tennessee Titans": "https://upload.wikimedia.org/wikipedia/commons/2/2d/Tennessee_Titans_logo.svg",
+    "Washington Commanders": "https://upload.wikimedia.org/wikipedia/commons/0/0e/Washington_Commanders_logo.svg",
 }
 
 # ---------- ELO ----------
