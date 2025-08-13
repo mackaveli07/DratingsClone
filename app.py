@@ -353,4 +353,34 @@ for idx in range(0, len(week_games), 2):
             live_ml_1 = odds_index[odds_key]["moneyline"].get(team1.lower(), "N/A")
             live_ml_2 = odds_index[odds_key]["moneyline"].get(team2.lower(), "N/A")
             live_spread_1 = odds_index[odds_key]["spread"].get(team1.lower(), "N/A")
-            live_spread_2 = odds_index
+            live_spread_2 = odds_index[odds_key]["spread"].get(team2.lower(), "N/A")
+            bookmaker_name = odds_index[odds_key]["bookmaker"]
+
+        # Calculate edge
+        try:
+            edge_home = moneyline_to_probability(live_ml_2) - exp2 if live_ml_2 != "N/A" else None
+            edge_away = moneyline_to_probability(live_ml_1) - exp1 if live_ml_1 != "N/A" else None
+        except:
+            edge_home = edge_away = None
+
+        render_matchup_card(
+            team_home=team2,
+            team_away=team1,
+            logos=TEAM_LOGOS,
+            odds_book=bookmaker_name,
+            prob_home=exp2,
+            prob_away=exp1,
+            predicted_spread=pred_spread,
+            predicted_ml_home=pred_ml_home,
+            predicted_ml_away=pred_ml_away,
+            live_ml_home=live_ml_2,
+            live_ml_away=live_ml_1,
+            live_spread_home=live_spread_2,
+            live_spread_away=live_spread_1,
+            edge_home=edge_home,
+            edge_away=edge_away,
+            is_value_home=edge_home>0.05 if edge_home else False,
+            is_value_away=edge_away>0.05 if edge_away else False
+        )
+
+st.markdown('<div class="footer">NFL Elo Dashboard — Data & Predictions updated live</div>', unsafe_allow_html=True)
