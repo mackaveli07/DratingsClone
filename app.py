@@ -4,7 +4,6 @@ import numpy as np
 from collections import defaultdict
 from difflib import get_close_matches
 import time
-import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 
 # --- CONFIG ---
@@ -47,14 +46,26 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- HEADLESS DRIVER ---
+# --- HEADLESS DRIVER FIX ---
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium import webdriver
+
 def start_driver():
-    options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.binary_location = "/usr/bin/chromium"
-    return uc.Chrome(options=options)
+    """
+    Returns a headless Chrome driver with automatic version matching.
+    """
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    
+    # Automatically installs matching ChromeDriver for your Chrome version
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
 
 # --- SCRAPERS ---
 def scrape_fanduel():
@@ -119,7 +130,6 @@ def scrape_betonline():
                 "bookmaker": "BetOnline"
             }
     return odds_data
-
 # --- HELPERS ---
 def moneyline_to_probability(ml):
     try:
