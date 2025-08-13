@@ -73,43 +73,7 @@ def start_driver():
     return driver
 
 # --- SCRAPERS ---
-def scrape_fanduel():
-    driver = start_driver()
-    driver.get("https://sportsbook.fanduel.com/navigation/nfl")
-    time.sleep(3)
-    soup = BeautifulSoup(driver.page_source, "lxml")
-    driver.quit()
-    odds_data = {}
-    for event in soup.select("div.event"):
-        teams = [t.get_text(strip=True) for t in event.select("span.participant-name")]
-        mls = [p.get_text(strip=True) for p in event.select("span.odds")]
-        spreads = [p.get_text(strip=True) for p in event.select("span.point-spread")]
-        if len(teams) == 2:
-            odds_data[frozenset([teams[0].lower(), teams[1].lower()])] = {
-                "moneyline": {teams[0].lower(): mls[0], teams[1].lower(): mls[1]},
-                "spread": {teams[0].lower(): spreads[0], teams[1].lower(): spreads[1]},
-                "bookmaker": "FanDuel"
-            }
-    return odds_data
 
-def scrape_draftkings():
-    driver = start_driver()
-    driver.get("https://sportsbook.draftkings.com/leagues/football/nfl")
-    time.sleep(3)
-    soup = BeautifulSoup(driver.page_source, "lxml")
-    driver.quit()
-    odds_data = {}
-    for event in soup.select("div.event-cell"):
-        teams = [t.get_text(strip=True) for t in event.select("div.event-cell__name")]
-        mls = [p.get_text(strip=True) for p in event.select("span.sportsbook-odds")]
-        spreads = [p.get_text(strip=True) for p in event.select("span.sportsbook-outcome-cell__line")]
-        if len(teams) == 2:
-            odds_data[frozenset([teams[0].lower(), teams[1].lower()])] = {
-                "moneyline": {teams[0].lower(): mls[0], teams[1].lower(): mls[1]},
-                "spread": {teams[0].lower(): spreads[0], teams[1].lower(): spreads[1]},
-                "bookmaker": "DraftKings"
-            }
-    return odds_data
 
 def scrape_betonline():
     driver = start_driver()
