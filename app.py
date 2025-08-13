@@ -1,17 +1,30 @@
+# app_scraper.py
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
+import time
+import re
+import random
 from collections import defaultdict
 from difflib import get_close_matches
 
-### ---------- CONFIG ----------
-API_KEY = "4c39fd0413dbcc55279d85ab18bcc6f0"  # Replace with your TheOddsAPI key
-SPORT_KEY = "americanfootball_nfl"
-REGION = "us"
-MARKETS = "h2h,spreads"
-BOOKMAKER_PREFERENCE = None
+# ---------- SCRAPER DEPENDENCIES ----------
+from typing import Dict, Any, Optional, List
+from contextlib import contextmanager
 
+# Selenium / undetected-chromedriver
+try:
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.common.exceptions import TimeoutException, WebDriverException
+    SELENIUM_OK = True
+except Exception:
+    SELENIUM_OK = False
+
+# ---------- CONFIG ----------
+SPORT_KEY = "americanfootball_nfl"   # for labeling only
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
@@ -21,14 +34,14 @@ HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
 TEAM_LOGOS = {
-    "KC": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
-    "SF": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
-    "GB": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
-    "DAL": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
-    # Add more teams...
+    "kansas city chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+    "san francisco 49ers": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+    "green bay packers": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+    "dallas cowboys": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+    # add more teams here...
 }
 
-### ---------- ELO FUNCTIONS ----------
+# ---------- ELO ----------
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
@@ -50,62 +63,16 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
+    required = {"season", "week", "team1", "team2", "score1", "score2", "home_team"}
+    if not required.issubset(df.columns):
+        raise ValueError("Historical games sheet missing required columns.")
     grouped = df.groupby(["season", "week"])
     for (_, _), games in grouped:
         for _, row in games.iterrows():
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-### ---------- ODDS API ----------
-@st.cache_data(ttl=30)
-def get_theoddsapi_odds(api_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
-    params = {
-        "apiKey": api_key,
-        "regions": REGION,
-        "markets": MARKETS,
-        "oddsFormat": "american",
-        "dateFormat": "iso"
-    }
-    resp = requests.get(url, params=params, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
-
-def pick_bookmaker(bookmakers):
-    if not bookmakers:
-        return None
-    if BOOKMAKER_PREFERENCE:
-        for b in bookmakers:
-            if b.get("key") == BOOKMAKER_PREFERENCE:
-                return b
-    return bookmakers[0]
-
-def parse_odds_data(api_data):
-    odds_index = {}
-    for game in api_data:
-        teams = game.get("teams", [])
-        if len(teams) != 2:
-            continue
-        t0, t1 = teams
-        key = frozenset([t0.lower(), t1.lower()])
-        bookmakers = game.get("bookmakers", [])
-        bm = pick_bookmaker(bookmakers)
-        if not bm:
-            continue
-        markets = bm.get("markets", [])
-        ml = {}
-        sp = {}
-        for market in markets:
-            if market.get("key") == "h2h":
-                for outcome in market.get("outcomes", []):
-                    ml[outcome.get("name", "").lower()] = outcome.get("price")
-            elif market.get("key") == "spreads":
-                for outcome in market.get("outcomes", []):
-                    sp[outcome.get("name", "").lower()] = outcome.get("point")
-        odds_index[key] = {"moneyline": ml, "spread": sp, "bookmaker": bm.get("title", bm.get("key"))}
-    return odds_index
-
-### ---------- HELPERS ----------
+# ---------- HELPERS ----------
 def moneyline_to_probability(ml):
     try:
         if ml in [None, "N/A", ""]:
@@ -127,7 +94,9 @@ def moneyline_to_probability(ml):
         return None
 
 def probability_to_moneyline(prob):
-    if prob is None: return "N/A"
+    if prob is None:
+        return "N/A"
+    prob = max(min(prob, 0.999), 0.001)
     if prob >= 0.5:
         return f"-{round(100 * prob / (1 - prob))}"
     else:
@@ -142,27 +111,36 @@ def probability_to_spread(prob, team_is_favorite=True):
         spread = -spread
     return float(spread)
 
+def spread_to_probability(spread):
+    b = 0.23
+    return 1 / (1 + np.exp(-b * (-spread)))
+
 def format_edge_badge(edge):
     if edge is None:
         return ""
     if edge > 0.05:
-        return f'<span style="color:#16a34a;font-weight:700">▲ +{edge:.1%}</span>'
+        return f'<div style="display:inline-block;padding:4px 8px;border-radius:6px;background:#d4f9d4;color:#0b6623;font-weight:700">VALUE +{edge:.1%}</div>'
     if edge < -0.05:
-        return f'<span style="color:#dc2626;font-weight:700">▼ -{abs(edge):.1%}</span>'
-    return f'<span style="color:#6b7280;font-weight:700">≈ {edge:.1%}</span>'
+        return f'<div style="display:inline-block;padding:4px 8px;border-radius:6px;background:#ffd6d6;color:#8b0000;font-weight:700">NEG -{edge:.1%}</div>'
+    return f'<div style="display:inline-block;padding:4px 8px;border-radius:6px;background:#efefef;color:#333;font-weight:700">Close {edge:.1%}</div>'
 
 def fuzzy_find_team_in_odds(team_name, odds_index_keys):
-    name = team_name.lower()
+    name = str(team_name).lower()
     for key in odds_index_keys:
         for tk in key:
             if name == tk:
                 return key
+    for key in odds_index_keys:
+        combined = " ".join(list(key))
+        if name in combined:
+            return key
     candidates = []
     for key in odds_index_keys:
         for tk in key:
             candidates.append(tk)
     candidates = list(set(candidates))
-    from difflib import get_close_matches
+    if not candidates:
+        return None
     matches = get_close_matches(name, candidates, n=1, cutoff=0.6)
     if matches:
         best = matches[0]
@@ -171,336 +149,559 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
                 return k
     return None
 
-### ---------- CSS ----------
-APP_CSS = """
+# ---------- CARD CSS ----------
+CARD_CSS = """
 <style>
-body {
-    background: linear-gradient(120deg, #f0f4f8, #d9e2ec);
-    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-    color: #1f2937;
-}
-h1 {
-    color: #0f172a;
-    font-weight: 800;
-    letter-spacing: 1.2px;
-}
-h2 {
-    color: #334155;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-}
-.matchup-card {
-    background: #ffffffcc;
-    border-radius: 15px;
-    padding: 16px;
-    margin: 12px 8px;
-    box-shadow: 0 12px 24px rgb(0 0 0 / 0.1);
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.matchup-card:hover {
-    transform: translateY(-8px);
-    box-shadow: 0 20px 40px rgb(0 0 0 / 0.15);
-}
-.team-block {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 6px;
-}
-.team-logo {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    box-shadow: 0 4px 10px rgb(0 0 0 / 0.1);
-    object-fit: contain;
-    background: white;
-}
-.team-name {
-    font-weight: 700;
-    font-size: 20px;
-    color: #1e293b;
-    flex-grow: 1;
-}
-.ml-badge {
-    font-weight: 700;
-    padding: 5px 10px;
-    border-radius: 8px;
-    background: #e0e7ff;
-    color: #3730a3;
-    font-size: 0.9rem;
-    margin-right: 8px;
-}
-.value-badge {
-    background: linear-gradient(45deg, #16a34a, #22c55e);
-    color: white;
-    font-weight: 700;
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    margin-left: 10px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-.value-badge svg {
-    fill: white;
-    width: 16px;
-    height: 16px;
-}
-.prob-bar {
-    height: 14px;
-    border-radius: 8px;
-    overflow: hidden;
-    background: #e2e8f0;
-    margin-top: 6px;
-}
-.prob-fill {
-    height: 14px;
-}
-.home-color { background: #2563eb; }
-.away-color { background: #ef4444; }
-.prob-text {
-    font-size: 0.9rem;
-    margin-top: 4px;
-    color: #475569;
-    font-weight: 600;
-}
-.footer {
-    font-size: 0.85rem;
-    text-align: center;
-    margin-top: 2rem;
-    color: #94a3b8;
-}
+.matchup-card{border-radius:12px;padding:14px;margin-bottom:14px;box-shadow:0 6px 22px rgba(0,0,0,0.10);
+background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,248,248,0.98));}
+.team-block{display:flex;align-items:center;gap:12px;}
+.team-name{font-weight:800;font-size:18px;}
+.small-muted{color:#6b7280;font-size:12px;}
+.prob-bar{height:10px;border-radius:6px;overflow:hidden;background:#eee;margin-top:6px;}
+.prob-fill{height:10px;}
+.ml-badge{font-weight:700;padding:6px 8px;border-radius:6px;background:#f3f4f6;}
+.bookmaker{font-size:11px;color:#666;margin-left:8px;}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#334155;font-weight:700;font-size:11px;margin-left:6px;}
 </style>
 """
 
-### ---------- RENDER MATCHUP ----------
-def render_matchup_card(team_home, team_away, logos, odds_book,
-                        prob_home, prob_away, predicted_spread,
-                        predicted_ml_home, predicted_ml_away,
-                        live_ml_home, live_ml_away,
-                        live_spread_home, live_spread_away,
-                        edge_home=None, edge_away=None,
-                        is_value_home=False, is_value_away=False):
-    # Icons for value badge
-    value_icon_svg = """
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-    </svg>
-    """
-    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
-    cols = st.columns([1,1])
+# ---------- SCRAPER CORE ----------
+USER_AGENTS = [
+    # a few rotating UAs
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+]
 
-    # Away Team (left)
+@contextmanager
+def make_driver(headless=True):
+    if not SELENIUM_OK:
+        raise RuntimeError("Selenium/undetected-chromedriver not available. Install packages and restart.")
+    opts = uc.ChromeOptions()
+    ua = random.choice(USER_AGENTS)
+    opts.add_argument(f"--user-agent={ua}")
+    if headless:
+        opts.add_argument("--headless=new")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--window-size=1280,1800")
+    try:
+        driver = uc.Chrome(options=opts, use_subprocess=True)
+        yield driver
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+def _to_moneyline_string(x: Optional[float]) -> str:
+    if x is None:
+        return "N/A"
+    try:
+        xi = int(x)
+        if xi > 0:
+            return f"+{xi}"
+        else:
+            return f"{xi}"
+    except Exception:
+        return "N/A"
+
+def _to_spread_string(point: Optional[float]) -> str:
+    if point is None:
+        return "N/A"
+    try:
+        # show sign explicitly for favorite (negative) / dog (positive)
+        if point > 0:
+            return f"+{point:.1f}".rstrip('0').rstrip('.')
+        elif point < 0:
+            return f"{point:.1f}".rstrip('0').rstrip('.')
+        else:
+            return "PK"
+    except Exception:
+        return "N/A"
+
+def _normalize_pair(home: str, away: str, home_ml: Optional[int], away_ml: Optional[int],
+                    home_sp: Optional[float], away_sp: Optional[float],
+                    book_title: str) -> Dict[frozenset, Dict[str, Any]]:
+    # force consistent signs: favorite = negative spread, underdog = positive
+    if isinstance(home_sp, (int, float)) and isinstance(away_sp, (int, float)):
+        # If both present but signs same, flip using who’s favored by ML as tiebreaker
+        if np.sign(home_sp) == np.sign(away_sp):
+            # derive from MLs
+            if (isinstance(home_ml, int) and isinstance(away_ml, int)):
+                if home_ml < away_ml:  # home favored
+                    home_sp = -abs(home_sp)
+                    away_sp = abs(away_sp)
+                elif away_ml < home_ml:  # away favored
+                    home_sp = abs(home_sp)
+                    away_sp = -abs(away_sp)
+        else:
+            # ensure opposite signs and magnitude parity
+            m = max(abs(home_sp), abs(away_sp))
+            if home_sp < 0:
+                home_sp = -m
+                away_sp = m
+            else:
+                home_sp = m
+                away_sp = -m
+    key = frozenset([home.lower(), away.lower()])
+    return {
+        key: {
+            "moneyline": {
+                home.lower(): _to_moneyline_string(home_ml),
+                away.lower(): _to_moneyline_string(away_ml),
+            },
+            "spread": {
+                home.lower(): _to_spread_string(home_sp),
+                away.lower(): _to_spread_string(away_sp),
+            },
+            "bookmaker": book_title
+        }
+    }
+
+def _clean_team_name(txt: str) -> str:
+    return re.sub(r"\s+", " ", txt).strip()
+
+# --------- FanDuel scraper (experimental selectors) ----------
+def scrape_fanduel_nfl(headless=True, timeout=18) -> Dict[frozenset, Dict[str, Any]]:
+    """
+    Attempts to scrape NFL Game Lines (Moneyline + Spread) from FanDuel main NFL page.
+    This is brittle by nature—selectors can change. We handle failures gracefully.
+    """
+    url = "https://sportsbook.fanduel.com/football/nfl?tab=game-lines"
+    odds: Dict[frozenset, Dict[str, Any]] = {}
+    if not SELENIUM_OK:
+        return odds
+    try:
+        with make_driver(headless=headless) as d:
+            d.get(url)
+            WebDriverWait(d, timeout).until(lambda drv: drv.execute_script("return document.readyState") == "complete")
+            # Wait for event cards to render (heuristic)
+            WebDriverWait(d, timeout).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='event-row'],[class*='event'],[class*='EventRow']")))
+
+            event_nodes = d.find_elements(By.CSS_SELECTOR, "[data-testid*='event-row'],[class*='event'],[class*='EventRow']")
+            for node in event_nodes:
+                try:
+                    text = node.text
+                    # Heuristic parse: find two team names (lines), their ML and Spread bits.
+                    # We look for patterns like +120 / -140 and spreads like -2.5 / +2.5
+                    # Extract team names from the first 2 non-empty lines that aren't prices.
+                    lines = [ln for ln in text.splitlines() if ln.strip()]
+                    # crude filter to avoid headers
+                    teams = []
+                    for ln in lines:
+                        if re.search(r"[+-]?\d+(\.\d+)?", ln):  # likely price or spread line
+                            continue
+                        if len(ln.split()) >= 2 and len(teams) < 2:
+                            teams.append(_clean_team_name(ln))
+                        if len(teams) == 2:
+                            break
+                    if len(teams) != 2:
+                        continue
+
+                    # Find moneylines (first two +/- numbers that look like ML between -2000..+2000)
+                    ml_candidates = [int(x) for x in re.findall(r"(?<!\d)(?:\+|-)\d{2,4}(?!\d)", text)]
+                    ml_candidates = [x for x in ml_candidates if -2000 <= x <= 2000]
+                    home_ml: Optional[int] = None
+                    away_ml: Optional[int] = None
+                    # try to pick two MLs
+                    if len(ml_candidates) >= 2:
+                        away_ml, home_ml = ml_candidates[:2]  # display order often away, then home
+
+                    # Find spreads: e.g., -2.5, +3.5 (limit reasonable range)
+                    sp_candidates = [float(x) for x in re.findall(r"(?<!\d)(?:\+|-)\d+(?:\.\d)?(?!\d)", text)]
+                    sp_candidates = [x for x in sp_candidates if -40.0 <= x <= 40.0]
+                    home_sp: Optional[float] = None
+                    away_sp: Optional[float] = None
+                    if len(sp_candidates) >= 2:
+                        # Often shown as away, then home; we normalize signs later
+                        away_sp, home_sp = sp_candidates[:2]
+
+                    # Determine which is home / away:
+                    # FanDuel often lists in Away vs Home order in many widgets; we’ll assume teams[0]=Away, teams[1]=Home
+                    away = teams[0]
+                    home = teams[1]
+
+                    normalized = _normalize_pair(
+                        home=home, away=away,
+                        home_ml=home_ml, away_ml=away_ml,
+                        home_sp=home_sp, away_sp=away_sp,
+                        book_title="FanDuel"
+                    )
+                    odds.update(normalized)
+                except Exception:
+                    continue
+    except Exception:
+        # swallow and return what we got
+        pass
+    return odds
+
+# --------- DraftKings scraper (experimental selectors) ----------
+def scrape_dk_nfl(headless=True, timeout=18) -> Dict[frozenset, Dict[str, Any]]:
+    """
+    Attempts to scrape NFL Game Lines (Moneyline + Spread) from DraftKings league page.
+    """
+    url = "https://sportsbook.draftkings.com/leagues/football/nfl"
+    odds: Dict[frozenset, Dict[str, Any]] = {}
+    if not SELENIUM_OK:
+        return odds
+    try:
+        with make_driver(headless=headless) as d:
+            d.get(url)
+            WebDriverWait(d, timeout).until(lambda drv: drv.execute_script("return document.readyState") == "complete")
+            # Wait for game containers (heuristic)
+            WebDriverWait(d, timeout).until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-event], [class*='event'], [class*='Event']")))
+            event_nodes = d.find_elements(By.CSS_SELECTOR, "[data-event], [class*='event'], [class*='Event']")
+
+            for node in event_nodes:
+                try:
+                    text = node.text
+                    lines = [ln for ln in text.splitlines() if ln.strip()]
+                    # Extract two team names (non-price lines)
+                    teams = []
+                    for ln in lines:
+                        if re.search(r"[+-]?\d+(\.\d+)?", ln):
+                            continue
+                        if len(ln.split()) >= 2 and len(teams) < 2:
+                            teams.append(_clean_team_name(ln))
+                        if len(teams) == 2:
+                            break
+                    if len(teams) != 2:
+                        continue
+
+                    # Moneylines
+                    ml_candidates = [int(x) for x in re.findall(r"(?<!\d)(?:\+|-)\d{2,4}(?!\d)", text)]
+                    ml_candidates = [x for x in ml_candidates if -2000 <= x <= 2000]
+                    home_ml = away_ml = None
+                    if len(ml_candidates) >= 2:
+                        away_ml, home_ml = ml_candidates[:2]
+
+                    # Spreads
+                    sp_candidates = [float(x) for x in re.findall(r"(?<!\d)(?:\+|-)\d+(?:\.\d)?(?!\d)", text)]
+                    sp_candidates = [x for x in sp_candidates if -40.0 <= x <= 40.0]
+                    home_sp = away_sp = None
+                    if len(sp_candidates) >= 2:
+                        away_sp, home_sp = sp_candidates[:2]
+
+                    # Assume teams[0]=Away, teams[1]=Home (common on DK list displays)
+                    away = teams[0]
+                    home = teams[1]
+
+                    normalized = _normalize_pair(
+                        home=home, away=away,
+                        home_ml=home_ml, away_ml=away_ml,
+                        home_sp=home_sp, away_sp=away_sp,
+                        book_title="DraftKings"
+                    )
+                    odds.update(normalized)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return odds
+
+# --------- Mock odds (for offline/dev fallback) ----------
+def mock_odds_from_schedule(sched_df: pd.DataFrame) -> Dict[frozenset, Dict[str, Any]]:
+    odds = {}
+    for _, r in sched_df.iterrows():
+        t1 = str(r["team1"])
+        t2 = str(r["team2"])
+        home = str(r.get("home_team", t1))
+        away = t2 if home == t1 else t1
+
+        # fabricate a plausible line
+        fav = random.choice([home, away])
+        dog = away if fav == home else home
+        fav_ml = -random.choice([110, 120, 130, 140, 150, 160])
+        dog_ml = +random.choice([100, 110, 120, 130, 140, 150])
+        fav_sp = -random.choice([1.5, 2.5, 3.5, 4.5, 6.5])
+        dog_sp = -fav_sp
+
+        odds[frozenset([home.lower(), away.lower()])] = {
+            "moneyline": {
+                home.lower(): _to_moneyline_string(fav_ml if fav == home else dog_ml),
+                away.lower(): _to_moneyline_string(dog_ml if fav == home else fav_ml),
+            },
+            "spread": {
+                home.lower(): _to_spread_string(fav_sp if fav == home else -fav_sp),
+                away.lower(): _to_spread_string(dog_sp if fav == home else -dog_sp),
+            },
+            "bookmaker": "MockBook"
+        }
+    return odds
+
+# --------- Combine / choose source ----------
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_odds(source: str, headless: bool, sched_df: pd.DataFrame) -> Dict[frozenset, Dict[str, Any]]:
+    """
+    source: "FanDuel", "DraftKings", "Both (prefer best ML)", or "Mock"
+    """
+    out: Dict[frozenset, Dict[str, Any]] = {}
+    if source == "Mock" or not SELENIUM_OK:
+        return mock_odds_from_schedule(sched_df)
+
+    fd = dk = {}
+    if source in ("FanDuel", "Both (prefer best ML)"):
+        fd = scrape_fanduel_nfl(headless=headless)
+    if source in ("DraftKings", "Both (prefer best ML)"):
+        dk = scrape_dk_nfl(headless=headless)
+
+    if source == "FanDuel":
+        return fd
+    if source == "DraftKings":
+        return dk
+
+    # Merge: prefer best ML (most favorable price for each team)
+    keys = set(fd.keys()) | set(dk.keys())
+    for k in keys:
+        fd_row = fd.get(k)
+        dk_row = dk.get(k)
+        if fd_row and not dk_row:
+            out[k] = fd_row
+        elif dk_row and not fd_row:
+            out[k] = dk_row
+        elif fd_row and dk_row:
+            # combine: choose better ML per team; spread pick from the book with better absolute price delta
+            teams = list(k)
+            t0, t1 = teams[0], teams[1]
+            ml = {}
+            sp = {}
+            # choose ML with better value for bettor (higher + for dog, lower abs - for fav)
+            for t in (t0, t1):
+                fd_ml = fd_row["moneyline"].get(t, "N/A")
+                dk_ml = dk_row["moneyline"].get(t, "N/A")
+                def _ml_to_int(s):
+                    try:
+                        return int(str(s))
+                    except:
+                        return None
+                a = _ml_to_int(fd_ml)
+                b = _ml_to_int(dk_ml)
+                best = fd_ml
+                if a is None and b is not None:
+                    best = dk_ml
+                elif b is None and a is not None:
+                    best = fd_ml
+                elif a is not None and b is not None:
+                    # choose the one that yields lower implied hold for bettor
+                    # for positive numbers: prefer larger; for negative numbers: prefer closer to zero
+                    if (a >= 0 and b >= 0 and b > a) or (a < 0 and b < 0 and abs(b) < abs(a)) or (a < 0 <= b):
+                        best = dk_ml
+                    else:
+                        best = fd_ml
+                ml[t] = best
+
+            # pick spreads from FanDuel by default; if missing, use DK
+            for t in (t0, t1):
+                sp[t] = fd_row["spread"].get(t, dk_row["spread"].get(t, "N/A"))
+
+            out[k] = {
+                "moneyline": ml,
+                "spread": sp,
+                "bookmaker": "FD/DK (best ML)"
+            }
+    return out
+
+# ---------- UI RENDER ----------
+def render_matchup_card(team_home, team_away, logos, odds_book,
+                        prob_home, prob_away,
+                        pred_spread_home, pred_spread_away,
+                        live_ml_home, live_ml_away,
+                        live_spread_home, live_spread_away):
+    implied_home = moneyline_to_probability(live_ml_home)
+    implied_away = moneyline_to_probability(live_ml_away)
+    edge_home = None if implied_home is None else (prob_home - implied_home)
+    edge_away = None if implied_away is None else (prob_away - implied_away)
+
+    st.markdown(CARD_CSS, unsafe_allow_html=True)
+    st.markdown("<div class='matchup-card'>", unsafe_allow_html=True)
+
+    cols = st.columns([1,1])
+    # Left side = Away
     with cols[0]:
         logo_url = logos.get(team_away.lower(), "")
-        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_away else ""
-        st.markdown(f"""
-        <div class="team-block">
-            <img src="{logo_url}" class="team-logo"/>
-            <div>
-                <div class="team-name">{team_away} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_away}</span>
-                    <span class="ml-badge">Live ML: {live_ml_away}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{predicted_spread:+.1f}</strong> |
-                    Live Spread: <strong>{live_spread_away}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill away-color" style="width: {prob_away*100:.1f}%;"></div>
-                </div>
-                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='team-block'><img src='{logo_url}' width='56' style='border-radius:6px'/>"
+            f"<div><div class='team-name'>{team_away}</div>"
+            f"<div class='small-muted'>ML: <span class='ml-badge'>{live_ml_away}</span> | Spread: <strong>{live_spread_away}</strong>"
+            f"<span class='pill'>Pred: {pred_spread_away}</span></div>"
+            f"</div></div>", unsafe_allow_html=True
+        )
+        pct = prob_away if prob_away is not None else 0.5
+        fill_color = "#16a34a" if edge_away and edge_away > 0.05 else ("#ef4444" if edge_away and edge_away < -0.05 else "#3b82f6")
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct*100:.1f}%; background:{fill_color}'></div></div>", unsafe_allow_html=True)
+        if prob_away is not None:
+            st.markdown(f"<div class='small-muted'>{(prob_away*100):.1f}% win probability</div>", unsafe_allow_html=True)
 
-    # Home Team (right)
+    # Right side = Home
     with cols[1]:
-        logo_url = logos.get(team_home.lower(), "")
-        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_home else ""
-        st.markdown(f"""
-        <div class="team-block" style="justify-content:flex-end;">
-            <div style="text-align:right;">
-                <div class="team-name">{team_home} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_home}</span>
-                    <span class="ml-badge">Live ML: {live_ml_home}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{-predicted_spread:.1f}</strong> |
-                    Live Spread: <strong>{-float(live_spread_home) if live_spread_home != 'N/A' else 'N/A'}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill home-color" style="width: {prob_home*100:.1f}%;"></div>
-                </div>
-                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
-            </div>
-            <img src="{logo_url}" class="team-logo"/>
-        </div>
-        """, unsafe_allow_html=True)
+        logo_url2 = logos.get(team_home.lower(), "")
+        st.markdown(
+            f"<div class='team-block' style='justify-content:flex-end'>"
+            f"<div><div class='team-name' style='text-align:right'>{team_home}</div>"
+            f"<div class='small-muted' style='text-align:right'>ML: <span class='ml-badge'>{live_ml_home}</span> | Spread: <strong>{live_spread_home}</strong>"
+            f"<span class='pill'>Pred: {pred_spread_home}</span></div>"
+            f"</div> <img src='{logo_url2}' width='56' style='border-radius:6px'/></div>", unsafe_allow_html=True
+        )
+        pct2 = prob_home if prob_home is not None else 0.5
+        fill_color2 = "#16a34a" if edge_home and edge_home > 0.05 else ("#ef4444" if edge_home and edge_home < -0.05 else "#3b82f6")
+        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{pct2*100:.1f}%; background:{fill_color2}'></div></div>", unsafe_allow_html=True)
+        if prob_home is not None:
+            st.markdown(f"<div class='small-muted' style='text-align:right'>{(prob_home*100):.1f}% win probability</div>", unsafe_allow_html=True)
 
-    st.markdown(f"""
-    <div style="text-align:center; margin-top: 12px; font-weight:700; color:#475569;">
-        Predicted Spread: {predicted_spread:+.1f} &nbsp;&nbsp;|&nbsp;&nbsp; Bookmaker: {odds_book}
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Edges summary
-    edge_home_html = format_edge_badge(edge_home) if edge_home is not None else ""
-    edge_away_html = format_edge_badge(edge_away) if edge_away is not None else ""
-    if edge_home_html or edge_away_html:
-        st.markdown(f"""
-        <div style="text-align:center; margin-top: 6px; font-weight:700; font-size: 1.1rem; color:#334155;">
-            Home Edge: {edge_home_html} &nbsp;&nbsp;|&nbsp;&nbsp; Away Edge: {edge_away_html}
-        </div>
-        """, unsafe_allow_html=True)
+    edge_html = ""
+    if edge_home is not None:
+        edge_html += f"Home edge: {format_edge_badge(edge_home)}&nbsp;&nbsp;"
+    if edge_away is not None:
+        edge_html += f"Away edge: {format_edge_badge(edge_away)}"
+    if edge_html:
+        st.markdown(f"<div style='margin-top:8px'>{edge_html} <span class='bookmaker'>Bookmaker: {odds_book}</span></div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("")
 
-### ---------- MAIN ----------
-st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
-st.markdown(APP_CSS, unsafe_allow_html=True)
+# ---------- STREAMLIT APP ----------
+st.set_page_config(page_title="NFL Elo — FanDuel & DraftKings Scraper", layout="wide")
+st.title("🏈 NFL Elo Betting Dashboard — FanDuel & DraftKings")
+st.caption("Elo predictions + live odds scraped from FanDuel/DraftKings (with mock fallback).")
 
-st.title("🏈 NFL Elo Betting Dashboard")
-st.markdown("""
-<div style="background: linear-gradient(90deg, #2563eb, #3b82f6);
-            padding: 16px; border-radius: 16px; margin-bottom: 24px; color: white;
-            font-weight: 800; font-size: 2.2rem; text-align: center;
-            box-shadow: 0 8px 32px rgb(59 130 246 / 0.3);">
-    NFL Elo & Live Odds Dashboard — Value Bets Highlighted
-</div>
-""", unsafe_allow_html=True)
-
-# Load data
+# Load Excel
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
+except FileNotFoundError:
+    st.error(f"Excel file '{EXCEL_FILE}' not found. Put it in the app folder or update EXCEL_FILE path.")
+    st.stop()
 except Exception as e:
-    st.error(f"Error loading Excel file or sheets: {e}")
+    st.error(f"Error reading Excel file: {e}")
     st.stop()
 
-ratings = run_elo_pipeline(hist_df)
+# Validate schedule columns
+if 'week' not in sched_df.columns:
+    st.error("Schedule sheet must contain a 'week' column.")
+    st.stop()
 
-st.sidebar.header("Controls")
-use_api = st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
-api_key_input = st.sidebar.text_input("TheOddsAPI key (override)", value="")
-if api_key_input.strip():
-    API_KEY = api_key_input.strip()
-prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
-if prefer_book.strip():
-    BOOKMAKER_PREFERENCE = prefer_book.strip()
+# Build Elo ratings
+try:
+    ratings = run_elo_pipeline(hist_df)
+except Exception as e:
+    st.error(f"Error computing Elo: {e}")
+    st.stop()
 
+# Sidebar
+st.sidebar.header("Odds Source")
+source = st.sidebar.selectbox("Choose source", ["Both (prefer best ML)", "FanDuel", "DraftKings", "Mock"], index=0)
+headless = st.sidebar.checkbox("Headless browser", value=True)
+st.sidebar.caption("If scraping fails due to site changes or bot checks, switch to Mock for testing.")
+
+# Week dropdown
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
-selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks) - 1)
+if not available_weeks:
+    st.error("No weeks found in schedule sheet.")
+    st.stop()
 
-week_games = sched_df[sched_df['week'] == selected_week]
+default_index = len(available_weeks) - 1 if len(available_weeks) > 0 else 0
+selected_week = st.selectbox("Select Week to view", available_weeks, index=default_index)
+
+st.markdown("---")
+
+# Filter schedule for selected week
+week_games = sched_df[sched_df['week'] == selected_week].copy()
 if week_games.empty:
     st.info(f"No games found for week {selected_week}.")
     st.stop()
 
-# Fetch odds if enabled
-odds_index = {}
-if use_api:
+# Fetch odds via scrapers (or mock)
+with st.spinner(f"Fetching odds from {source}..."):
     try:
-        api_data = get_theoddsapi_odds(API_KEY)
-        odds_index = parse_odds_data(api_data)
+        odds_index = fetch_odds(source, headless, week_games)
     except Exception as e:
-        st.error(f"Error fetching odds: {e}")
+        st.warning(f"Fetching odds failed: {e}. Using Mock odds for display.")
+        odds_index = mock_odds_from_schedule(week_games)
 
-value_bets = []
+if not odds_index:
+    st.warning("No odds found from the selected source. Try switching source, disabling headless, or using Mock.")
+    odds_index = mock_odds_from_schedule(week_games)
 
-# Render matchups in a 2-column grid
-for idx in range(0, len(week_games), 2):
-    cols = st.columns(2)
-    for i in range(2):
-        if idx + i >= len(week_games):
-            break
-        row = week_games.iloc[idx + i]
-        team1 = row['team1']
-        team2 = row['team2']
-        home_team = row.get('home_team', team1)
+# Render matchup cards
+for _, row in week_games.iterrows():
+    team1 = str(row['team1'])
+    team2 = str(row['team2'])
+    home_team = str(row.get('home_team', team1))
 
-        r1 = ratings.get(team1, BASE_ELO) + (HOME_ADVANTAGE if home_team == team1 else 0)
-        r2 = ratings.get(team2, BASE_ELO) + (HOME_ADVANTAGE if home_team == team2 else 0)
-        exp1 = expected_score(r1, r2)
-        exp2 = 1 - exp1
+    # Elo probs (from home/away perspective)
+    r1 = ratings.get(team1, BASE_ELO) + (HOME_ADVANTAGE if home_team == team1 else 0)
+    r2 = ratings.get(team2, BASE_ELO) + (HOME_ADVANTAGE if home_team == team2 else 0)
+    prob_team1 = expected_score(r1, r2)
+    prob_team2 = 1 - prob_team1
 
-        pred_spread = probability_to_spread(exp1, team_is_favorite=True)
+    # Predicted spreads for each team (negative favorite, positive dog)
+    # predicted_spread here is from team1 perspective; then mirror to team2
+    team1_is_fav = prob_team1 > prob_team2
+    sp_team1 = probability_to_spread(prob_team1, team_is_favorite=team1_is_fav)
+    sp_team2 = -sp_team1
 
-        pred_ml_1 = probability_to_moneyline(exp1)
-        pred_ml_2 = probability_to_moneyline(exp2)
+    # Live odds defaults
+    live_ml_home = live_ml_away = "N/A"
+    live_spread_home = live_spread_away = "N/A"
+    bookmaker_title = "N/A"
 
-        # Lookup live odds if available
-        odds_key = fuzzy_find_team_in_odds(team1, odds_index.keys())
-        live_ml_1 = live_ml_2 = "N/A"
-        live_spread_1 = live_spread_2 = "N/A"
-        bookmaker_name = "N/A"
+    match_key = fuzzy_find_team_in_odds(team1, odds_index.keys()) or fuzzy_find_team_in_odds(team2, odds_index.keys())
+    if match_key:
+        entry = odds_index.get(match_key, {})
+        bookmaker_title = entry.get("bookmaker", "N/A")
+        ml = entry.get("moneyline", {}) or {}
+        sp = entry.get("spread", {}) or {}
 
-        if odds_key:
-            live_ml_1 = odds_index[odds_key]["moneyline"].get(team1.lower(), "N/A")
-            live_ml_2 = odds_index[odds_key]["moneyline"].get(team2.lower(), "N/A")
-            live_spread_1 = odds_index[odds_key]["spread"].get(team1.lower(), "N/A")
-            live_spread_2 = odds_index[odds_key]["spread"].get(team2.lower(), "N/A")
-            bookmaker_name = odds_index[odds_key].get("bookmaker", "N/A")
+        live_ml_team1 = ml.get(team1.lower(), next(iter(ml.values()), "N/A"))
+        live_ml_team2 = ml.get(team2.lower(), next(iter(ml.values()), "N/A"))
+        live_spread_team1 = sp.get(team1.lower(), next(iter(sp.values()), "N/A"))
+        live_spread_team2 = sp.get(team2.lower(), next(iter(sp.values()), "N/A"))
 
-        # Calculate value edges
-        implied_prob_1 = moneyline_to_probability(live_ml_1)
-        implied_prob_2 = moneyline_to_probability(live_ml_2)
-        edge_1 = (exp1 - implied_prob_1) if implied_prob_1 else None
-        edge_2 = (exp2 - implied_prob_2) if implied_prob_2 else None
+        # assign to home/away slots for display (home is on the RIGHT)
+        if home_team == team1:
+            live_ml_home, live_ml_away = live_ml_team1, live_ml_team2
+            live_spread_home, live_spread_away = live_spread_team1, live_spread_team2
+            prob_home, prob_away = prob_team1, prob_team2
+            pred_spread_home, pred_spread_away = sp_team1, sp_team2
+            home_name, away_name = team1, team2
+        else:
+            live_ml_home, live_ml_away = live_ml_team2, live_ml_team1
+            live_spread_home, live_spread_away = live_spread_team2, live_spread_team1
+            prob_home, prob_away = prob_team2, prob_team1
+            pred_spread_home, pred_spread_away = sp_team2, sp_team1
+            home_name, away_name = team2, team1
+    else:
+        # If we couldn't map, still show Elo and labels
+        if home_team == team1:
+            prob_home, prob_away = prob_team1, prob_team2
+            pred_spread_home, pred_spread_away = sp_team1, sp_team2
+            home_name, away_name = team1, team2
+        else:
+            prob_home, prob_away = prob_team2, prob_team1
+            pred_spread_home, pred_spread_away = sp_team2, sp_team1
+            home_name, away_name = team2, team1
 
-        is_value_1 = edge_1 is not None and edge_1 > 0.05
-        is_value_2 = edge_2 is not None and edge_2 > 0.05
+    # Format predicted spreads to show explicit sign per team
+    def fmt_pred(v):
+        return f"{v:+.1f}"
 
-        if is_value_1:
-            value_bets.append({"Week": selected_week, "Team": team1, "Opponent": team2,
-                               "Edge": edge_1, "Market ML": live_ml_1, "Model Prob": exp1,
-                               "Bookmaker": bookmaker_name, "Side": "Home"})
+    # Render card
+    render_matchup_card(
+        team_home=home_name,
+        team_away=away_name,
+        logos=TEAM_LOGOS,
+        odds_book=bookmaker_title,
+        prob_home=prob_home,
+        prob_away=prob_away,
+        pred_spread_home=fmt_pred(pred_spread_home),
+        pred_spread_away=fmt_pred(pred_spread_away),
+        live_ml_home=live_ml_home,
+        live_ml_away=live_ml_away,
+        live_spread_home=live_spread_home,
+        live_spread_away=live_spread_away,
+    )
 
-        if is_value_2:
-            value_bets.append({"Week": selected_week, "Team": team2, "Opponent": team1,
-                               "Edge": edge_2, "Market ML": live_ml_2, "Model Prob": exp2,
-                               "Bookmaker": bookmaker_name, "Side": "Away"})
-
-        with cols[i]:
-            render_matchup_card(
-                team_home=team1,
-                team_away=team2,
-                logos=TEAM_LOGOS,
-                odds_book=bookmaker_name,
-                prob_home=exp1,
-                prob_away=exp2,
-                predicted_spread=pred_spread,
-                predicted_ml_home=pred_ml_1,
-                predicted_ml_away=pred_ml_2,
-                live_ml_home=live_ml_1,
-                live_ml_away=live_ml_2,
-                live_spread_home=live_spread_1,
-                live_spread_away=live_spread_2,
-                edge_home=edge_1,
-                edge_away=edge_2,
-                is_value_home=is_value_1,
-                is_value_away=is_value_2
-            )
-
-# Show Value Bets Summary table
 st.markdown("---")
-st.subheader("💰 Value Bets Summary")
-if value_bets:
-    df_val = pd.DataFrame(value_bets)
-    df_val["Edge (%)"] = df_val["Edge"].apply(lambda x: f"{x:.1%}")
-    st.dataframe(df_val.style.set_properties(**{
-        "background-color": "#d1fae5",
-        "color": "#065f46",
-        "font-weight": "600"
-    }), use_container_width=True)
-else:
-    st.info("No value bets found for this week.")
-
-st.markdown("""
-<div class="footer">
-    Powered by Elo Ratings & TheOddsAPI | Made with ❤️ by Phil
-</div>
-""", unsafe_allow_html=True)
+st.caption("Note: sportsbook HTML changes frequently; if scraping fails, use Mock or try toggling headless.")
