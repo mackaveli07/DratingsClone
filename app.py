@@ -5,6 +5,21 @@ from collections import defaultdict
 from difflib import get_close_matches
 import time
 from bs4 import BeautifulSoup
+import subprocess
+import sys
+
+# --- Ensure webdriver_manager is installed ---
+try:
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium import webdriver
+    from webdriver_manager.chrome import ChromeDriverManager
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "selenium", "webdriver-manager"])
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    from selenium import webdriver
+    from webdriver_manager.chrome import ChromeDriverManager
 
 # --- CONFIG ---
 BASE_ELO = 1500
@@ -46,36 +61,24 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- HEADLESS DRIVER FIX ---
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium import webdriver
-
+# --- HEADLESS DRIVER ---
 def start_driver():
-    """
-    Returns a headless Chrome driver with automatic version matching.
-    """
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Automatically installs matching ChromeDriver for your Chrome version
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
 # --- SCRAPERS ---
 def scrape_fanduel():
-    url = "https://sportsbook.fanduel.com/navigation/nfl"
     driver = start_driver()
-    driver.get(url)
-    time.sleep(5)
+    driver.get("https://sportsbook.fanduel.com/navigation/nfl")
+    time.sleep(3)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event"):
         teams = [t.get_text(strip=True) for t in event.select("span.participant-name")]
@@ -90,13 +93,11 @@ def scrape_fanduel():
     return odds_data
 
 def scrape_draftkings():
-    url = "https://sportsbook.draftkings.com/leagues/football/nfl"
     driver = start_driver()
-    driver.get(url)
-    time.sleep(5)
+    driver.get("https://sportsbook.draftkings.com/leagues/football/nfl")
+    time.sleep(3)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event-cell"):
         teams = [t.get_text(strip=True) for t in event.select("div.event-cell__name")]
@@ -111,13 +112,11 @@ def scrape_draftkings():
     return odds_data
 
 def scrape_betonline():
-    url = "https://www.betonline.ag/sportsbook/football/nfl"
     driver = start_driver()
-    driver.get(url)
-    time.sleep(5)
+    driver.get("https://www.betonline.ag/sportsbook/football/nfl")
+    time.sleep(3)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event"):
         teams = [t.get_text(strip=True) for t in event.select("span.team-name")]
@@ -130,15 +129,17 @@ def scrape_betonline():
                 "bookmaker": "BetOnline"
             }
     return odds_data
+
 # --- HELPERS ---
 def moneyline_to_probability(ml):
     try:
-        if ml.startswith('+'):
-            val = int(ml[1:])
-            return 100.0 / (val + 100.0)
-        if ml.startswith('-'):
-            val = int(ml[1:])
-            return val / (val + 100.0)
+        if isinstance(ml, str):
+            if ml.startswith('+'):
+                val = int(ml[1:])
+                return 100.0 / (val + 100.0)
+            if ml.startswith('-'):
+                val = int(ml[1:])
+                return val / (val + 100.0)
     except:
         return None
     return None
@@ -149,10 +150,6 @@ def probability_to_spread(prob, team_is_favorite=True):
     spread = np.log(prob / (1 - prob)) / b
     spread = round(spread * 2) / 2
     return spread if team_is_favorite else -spread
-
-def probability_to_cover(prob_team, spread):
-    win_prob_cover = 1 / (1 + np.exp(-0.23 * (-spread)))
-    return win_prob_cover if prob_team > 0.5 else 1 - win_prob_cover
 
 def format_edge_badge(edge):
     if edge is None: return ""
@@ -177,7 +174,9 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
 # --- UI ---
 st.set_page_config(layout="wide", page_title="NFL Elo Betting Dashboard")
 st.title("🏈 NFL Elo Betting Dashboard")
+
 source = st.sidebar.selectbox("Select Odds Source", ["FanDuel", "DraftKings", "BetOnline"])
+fetch_button = st.sidebar.button("Fetch Live Odds")
 
 # Load Excel
 try:
@@ -192,15 +191,23 @@ weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 week_choice = st.selectbox("Select Week", weeks, index=len(weeks)-1)
 week_games = sched_df[sched_df['week'] == week_choice]
 
-# Fetch odds
-if source == "FanDuel":
-    odds_index = scrape_fanduel()
-elif source == "DraftKings":
-    odds_index = scrape_draftkings()
-else:
-    odds_index = scrape_betonline()
+# Fetch odds on-demand
+odds_index = {}
+if fetch_button:
+    st.info("Fetching live odds, please wait...")
+    try:
+        if source == "FanDuel":
+            odds_index = scrape_fanduel()
+        elif source == "DraftKings":
+            odds_index = scrape_draftkings()
+        else:
+            odds_index = scrape_betonline()
+    except Exception as e:
+        st.error(f"Could not fetch odds from {source}: {e}")
+        odds_index = {}
+    st.success("Odds fetched successfully!")
 
-# Card CSS
+# --- Render matchup cards ---
 CARD_CSS = """
 <style>
 .matchup-card{border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 18px rgba(0,0,0,0.08);background:linear-gradient(180deg,#fff,#f9f9f9);}
@@ -213,7 +220,6 @@ CARD_CSS = """
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
 
-# Render cards
 for _, row in week_games.iterrows():
     t1, t2 = row['team1'], row['team2']
     home = row.get('home_team', t1)
@@ -224,9 +230,6 @@ for _, row in week_games.iterrows():
 
     pred_spread_t1 = probability_to_spread(p1, p1 > p2)
     pred_spread_t2 = -pred_spread_t1
-
-    cover_prob_t1 = probability_to_cover(p1, float(pred_spread_t1))
-    cover_prob_t2 = probability_to_cover(p2, float(pred_spread_t2))
 
     match_key = fuzzy_find_team_in_odds(t1, odds_index.keys())
     ml_t1 = ml_t2 = sp_t1 = sp_t2 = "N/A"
@@ -247,142 +250,16 @@ for _, row in week_games.iterrows():
         logo1 = TEAM_LOGOS.get(t1.lower(), "")
         st.markdown(f"<div class='team-block'><img src='{logo1}' width='56'/>"
                     f"<div><div class='team-name'>{t1}</div>"
-                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%}</div></div></div>",
+                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f}</div></div></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p1*100:.1f}%;background:{'#16a34a' if edge_t1 and edge_t1>0.05 else '#ef4444' if edge_t1 and edge_t1<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted'>{p1:.1%} win probability</div>", unsafe_allow_html=True)
         st.markdown(format_edge_badge(edge_t1), unsafe_allow_html=True)
 
     with cols[1]:
         logo2 = TEAM_LOGOS.get(t2.lower(), "")
-        st.markdown(f"<div class='team-block' style='justify-content:flex-end'><div>"
-                    f"<div class='team-name' style='text-align:right'>{t2}</div>"
-                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%}</div></div>"
-                    f"<img src='{logo2}' width='56'/></div>",
+        st.markdown(f"<div class='team-block'><img src='{logo2}' width='56'/>"
+                    f"<div><div class='team-name'>{t2}</div>"
+                    f"<div class='small-muted'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f}</div></div></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p2*100:.1f}%;background:{'#16a34a' if edge_t2 and edge_t2>0.05 else '#ef4444' if edge_t2 and edge_t2<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted' style='text-align:right'>{p2:.1%} win probability</div>", unsafe_allow_html=True)
         st.markdown(format_edge_badge(edge_t2), unsafe_allow_html=True)
-
-    st.markdown(f"<small>Bookmaker: {book}</small>")
-    st.markdown("---")
-
-if 'week' not in sched_df.columns:
-    st.error("Schedule sheet must contain a 'week' column.")
-    st.stop()
-
-# Build Elo ratings
-try:
-    ratings = run_elo_pipeline(hist_df)
-except Exception as e:
-    st.error(f"Error computing Elo: {e}")
-    st.stop()
-
-# Sidebar controls
-st.sidebar.header("Controls")
-odds_source = st.sidebar.selectbox("Odds Source", ["FanDuel", "DraftKings", "BetOnline"])
-
-# Week dropdown
-available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
-if not available_weeks:
-    st.error("No weeks found in schedule sheet.")
-    st.stop()
-default_index = len(available_weeks) - 1 if len(available_weeks) > 0 else 0
-selected_week = st.selectbox("Select Week to view", available_weeks, index=default_index)
-
-st.markdown("---")
-
-# Filter schedule for selected week
-week_games = sched_df[sched_df['week'] == selected_week].copy()
-if week_games.empty:
-    st.info(f"No games found for week {selected_week}.")
-else:
-    # Fetch odds via selected scraper
-    odds_index = {}
-    try:
-        if odds_source == "FanDuel":
-            odds_index = scrape_fanduel_nfl()
-        elif odds_source == "DraftKings":
-            odds_index = scrape_dk_nfl()
-        else:
-            odds_index = scrape_betonline_nfl()
-    except Exception as e:
-        st.error(f"Could not fetch odds from {odds_source}: {e}")
-        odds_index = {}
-
-    # Render matchup cards for the selected week
-    for _, row in week_games.iterrows():
-        team1 = row['team1']
-        team2 = row['team2']
-        home_team = row.get('home_team', team1)
-
-        # Predicted probabilities using Elo + home adv
-        r1 = ratings.get(team1, BASE_ELO) + (HOME_ADVANTAGE if home_team == team1 else 0)
-        r2 = ratings.get(team2, BASE_ELO) + (HOME_ADVANTAGE if home_team == team2 else 0)
-        # Probability for each team
-        prob_team1 = expected_score(r1, r2)
-        prob_team2 = 1 - prob_team1
-
-        # Predicted spread from each team's perspective (favorite negative, dog positive)
-        # We'll define it relative to each team (not strictly "home" here)
-        pred_spread_team1 = probability_to_spread(prob_team1, team_is_favorite=(prob_team1 > prob_team2))
-        pred_spread_team2 = -pred_spread_team1
-
-        # Default live values
-        live_ml_team1 = live_ml_team2 = live_spread_team1 = live_spread_team2 = "N/A"
-        bookmaker_title = "N/A"
-
-        if odds_index:
-            match_key = fuzzy_find_team_in_odds(team1, odds_index.keys())
-            if match_key is None:
-                match_key = fuzzy_find_team_in_odds(team2, odds_index.keys())
-            if match_key:
-                entry = odds_index.get(match_key, {})
-                bookmaker_title = entry.get("bookmaker", "N/A")
-                ml = entry.get("moneyline", {}) or {}
-                sp = entry.get("spread", {}) or {}
-
-                # Try exact lowercased key, else fallback to "first available"
-                live_ml_team1 = ml.get(team1.lower(), next(iter(ml.values()), "N/A"))
-                live_ml_team2 = ml.get(team2.lower(), next(iter(ml.values()), "N/A"))
-                live_spread_team1 = sp.get(team1.lower(), next(iter(sp.values()), "N/A"))
-                live_spread_team2 = sp.get(team2.lower(), next(iter(sp.values()), "N/A"))
-
-        # Render the card (home team shown on right column in this layout)
-        # We pass predicted spreads from each team's perspective,
-        # but the card displays Left = Away, Right = Home (as in your visual).
-        if home_team.lower() == team1.lower():
-            # team1 is home, team2 away -> right = team1
-            render_matchup_card(
-                team_home=team1,
-                team_away=team2,
-                logos=TEAM_LOGOS,
-                odds_book=bookmaker_title,
-                prob_home=prob_team1,
-                prob_away=prob_team2,
-                pred_spread_home=pred_spread_team1,
-                pred_spread_away=pred_spread_team2,
-                live_ml_home=live_ml_team1,
-                live_ml_away=live_ml_team2,
-                live_spread_home=live_spread_team1,
-                live_spread_away=live_spread_team2,
-            )
-        else:
-            # team2 is home -> right = team2
-            render_matchup_card(
-                team_home=team2,
-                team_away=team1,
-                logos=TEAM_LOGOS,
-                odds_book=bookmaker_title,
-                prob_home=prob_team2,
-                prob_away=prob_team1,
-                pred_spread_home=pred_spread_team2,
-                pred_spread_away=pred_spread_team1,
-                live_ml_home=live_ml_team2,
-                live_ml_away=live_ml_team1,
-                live_spread_home=live_spread_team2,
-                live_spread_away=live_spread_team1,
-            )
-
-st.markdown("---")
-st.caption("Tip: add more team logos to TEAM_LOGOS for a nicer UI. Scraper CSS can change; tweak selectors if a book updates their page.")
