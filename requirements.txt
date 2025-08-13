@@ -1,6 +1,8 @@
 streamlit
 pandas
 numpy
-openpyxl
+requests
+undetected-chromedriver
+selenium
+beautifulsoup4
 lxml
-scipy
