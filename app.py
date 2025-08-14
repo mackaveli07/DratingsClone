@@ -33,11 +33,9 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
     expected1 = expected_score(r1, r2)
-    expected2 = expected_score(r2, r1)
     actual1 = 1 if score1 > score2 else 0
-    actual2 = 1 - actual1
     elo_ratings[team1] += K * (actual1 - expected1)
-    elo_ratings[team2] += K * (actual2 - expected2)
+    elo_ratings[team2] += K * ((1 - actual1) - (1 - expected1))
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
@@ -47,25 +45,26 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- HEADLESS DRIVER WITH FALLBACK ---
-def start_driver(preferred_version=None):
+# --- HEADLESS DRIVER ---
+def get_chrome_options():
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    
+    return options
+
+def start_driver(preferred_version=None):
     try:
         if preferred_version:
-            driver = uc.Chrome(options=options, version_main=preferred_version, force_download=True)
+            driver = uc.Chrome(options=get_chrome_options(), version_main=preferred_version, force_download=True)
         else:
-            driver = uc.Chrome(options=options)
+            driver = uc.Chrome(options=get_chrome_options())
         return driver
     except Exception as e:
         print(f"[WARNING] Failed to start ChromeDriver v{preferred_version}: {e}")
         print("[INFO] Falling back to auto-detect ChromeDriver")
-        driver = uc.Chrome(options=options)
-        return driver
+        return uc.Chrome(options=get_chrome_options())
 
 # --- SCRAPERS ---
 def scrape_fanduel(preferred_version=None):
@@ -75,7 +74,6 @@ def scrape_fanduel(preferred_version=None):
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event"):
         teams = [t.get_text(strip=True) for t in event.select("span.participant-name")]
@@ -96,7 +94,6 @@ def scrape_draftkings(preferred_version=None):
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event-cell"):
         teams = [t.get_text(strip=True) for t in event.select("div.event-cell__name")]
@@ -117,7 +114,6 @@ def scrape_betonline(preferred_version=None):
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
-
     odds_data = {}
     for event in soup.select("div.event"):
         teams = [t.get_text(strip=True) for t in event.select("span.team-name")]
@@ -130,6 +126,16 @@ def scrape_betonline(preferred_version=None):
                 "bookmaker": "BetOnline"
             }
     return odds_data
+
+# --- CACHED SCRAPER ---
+@st.cache_data(show_spinner=False)
+def get_odds(source, preferred_version=None):
+    if source == "FanDuel":
+        return scrape_fanduel(preferred_version)
+    elif source == "DraftKings":
+        return scrape_draftkings(preferred_version)
+    else:
+        return scrape_betonline(preferred_version)
 
 # --- HELPERS ---
 def moneyline_to_probability(ml):
@@ -178,9 +184,9 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
 # --- UI ---
 st.set_page_config(layout="wide", page_title="NFL Elo Betting Dashboard")
 st.title("🏈 NFL Elo Betting Dashboard")
+
 source = st.sidebar.selectbox("Select Odds Source", ["FanDuel", "DraftKings", "BetOnline"])
 preferred_version = st.sidebar.text_input("Preferred Chrome version (optional for local testing)", "")
-
 preferred_version = int(preferred_version) if preferred_version.isdigit() else None
 
 # Load Excel
@@ -196,13 +202,8 @@ weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 week_choice = st.selectbox("Select Week", weeks, index=len(weeks)-1)
 week_games = sched_df[sched_df['week'] == week_choice]
 
-# Fetch odds
-if source == "FanDuel":
-    odds_index = scrape_fanduel(preferred_version)
-elif source == "DraftKings":
-    odds_index = scrape_draftkings(preferred_version)
-else:
-    odds_index = scrape_betonline(preferred_version)
+# --- Fetch Odds (Cached) ---
+odds_index = get_odds(source, preferred_version)
 
 # --- CARD CSS ---
 CARD_CSS = """
