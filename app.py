@@ -53,7 +53,7 @@ def start_driver():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # let uc detect the Chrome binary automatically
+    # uc will automatically download the correct ChromeDriver
     driver = uc.Chrome(options=options)
     return driver
 
