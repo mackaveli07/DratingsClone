@@ -4,14 +4,9 @@ import numpy as np
 import requests
 from collections import defaultdict
 from difflib import get_close_matches
+from bs4 import BeautifulSoup
 
 ### ---------- CONFIG ----------
-API_KEY = "4c39fd0413dbcc55279d85ab18bcc6f0"  # Replace with your TheOddsAPI key
-SPORT_KEY = "americanfootball_nfl"
-REGION = "us"
-MARKETS = "h2h,spreads"
-BOOKMAKER_PREFERENCE = None
-
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
@@ -56,53 +51,44 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-### ---------- ODDS API ----------
+### ---------- BETONLINE SCRAPER ----------
 @st.cache_data(ttl=30)
-def get_theoddsapi_odds(api_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
-    params = {
-        "apiKey": api_key,
-        "regions": REGION,
-        "markets": MARKETS,
-        "oddsFormat": "american",
-        "dateFormat": "iso"
-    }
-    resp = requests.get(url, params=params, timeout=15)
+def get_betonline_odds():
+    url = "https://www.betonline.ag/sportsbook/football/nfl"
+    resp = requests.get(url, timeout=15)
     resp.raise_for_status()
-    return resp.json()
+    soup = BeautifulSoup(resp.text, "lxml")
 
-def pick_bookmaker(bookmakers):
-    if not bookmakers:
-        return None
-    if BOOKMAKER_PREFERENCE:
-        for b in bookmakers:
-            if b.get("key") == BOOKMAKER_PREFERENCE:
-                return b
-    return bookmakers[0]
-
-def parse_odds_data(api_data):
     odds_index = {}
-    for game in api_data:
-        teams = game.get("teams", [])
+    games = soup.find_all("div", class_="eventLine-book")
+    for game in games:
+        teams = game.find_all("div", class_="eventLine-team")
         if len(teams) != 2:
             continue
-        t0, t1 = teams
-        key = frozenset([t0.lower(), t1.lower()])
-        bookmakers = game.get("bookmakers", [])
-        bm = pick_bookmaker(bookmakers)
-        if not bm:
-            continue
-        markets = bm.get("markets", [])
+        team1 = teams[0].get_text(strip=True).lower()  # Away
+        team2 = teams[1].get_text(strip=True).lower()  # Home
+        key = frozenset([team1, team2])
+
+        # Moneyline
         ml = {}
+        ml_outcomes = game.find_all("div", class_="eventLine-book-value")
+        if len(ml_outcomes) >= 2:
+            ml[team1] = ml_outcomes[0].get_text(strip=True)
+            ml[team2] = ml_outcomes[1].get_text(strip=True)
+
+        # Spread (numeric)
         sp = {}
-        for market in markets:
-            if market.get("key") == "h2h":
-                for outcome in market.get("outcomes", []):
-                    ml[outcome.get("name", "").lower()] = outcome.get("price")
-            elif market.get("key") == "spreads":
-                for outcome in market.get("outcomes", []):
-                    sp[outcome.get("name", "").lower()] = outcome.get("point")
-        odds_index[key] = {"moneyline": ml, "spread": sp, "bookmaker": bm.get("title", bm.get("key"))}
+        sp_outcomes = game.find_all("div", class_="eventLine-spread")
+        if len(sp_outcomes) >= 2:
+            for i, team in enumerate([team1, team2]):
+                text = sp_outcomes[i].get_text(strip=True).replace("+","").replace("PK","0").replace("EVEN","0")
+                try:
+                    sp[team] = float(text)
+                except:
+                    sp[team] = 0.0
+
+        odds_index[key] = {"moneyline": ml, "spread": sp, "bookmaker": "BetOnline"}
+    
     return odds_index
 
 ### ---------- HELPERS ----------
@@ -186,8 +172,6 @@ h2 { color: #334155; font-weight: 700; margin-bottom: 0.5rem; }
 .value-badge svg { fill: white; width: 16px; height: 16px; }
 .prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
 .prob-fill { height: 14px; }
-.home-color { background: #2563eb; }
-.away-color { background: #ef4444; }
 .prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
 .footer { font-size: 0.85rem; text-align: center; margin-top: 2rem; color: #94a3b8; }
 </style>
@@ -201,15 +185,19 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                         live_spread_home, live_spread_away,
                         edge_home=None, edge_away=None,
                         is_value_home=False, is_value_away=False):
+    
     value_icon_svg = """
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
       <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
     </svg>
     """
+    home_color = "#2563eb" if predicted_spread >= 0 else "#ef4444"
+    away_color = "#ef4444" if predicted_spread >= 0 else "#2563eb"
+    
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols = st.columns([1,1])
 
-    # Away Team (left)
+    # Away Team
     with cols[0]:
         logo_url = logos.get(team_away.lower(), "")
         value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_away else ""
@@ -227,14 +215,14 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                     Live Spread: <strong>{-float(live_spread_away) if live_spread_away != 'N/A' else 'N/A'}</strong>
                 </div>
                 <div class="prob-bar">
-                    <div class="prob-fill away-color" style="width: {prob_away*100:.1f}%;"></div>
+                    <div class="prob-fill" style="width: {prob_away*100:.1f}%; background:{away_color};"></div>
                 </div>
                 <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-    # Home Team (right)
+    # Home Team
     with cols[1]:
         logo_url = logos.get(team_home.lower(), "")
         value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_home else ""
@@ -251,7 +239,7 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                     Live Spread: <strong>{live_spread_home}</strong>
                 </div>
                 <div class="prob-bar">
-                    <div class="prob-fill home-color" style="width: {prob_home*100:.1f}%;"></div>
+                    <div class="prob-fill" style="width: {prob_home*100:.1f}%; background:{home_color};"></div>
                 </div>
                 <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
             </div>
@@ -279,7 +267,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
-
 st.title("🏈 NFL Elo Betting Dashboard")
 st.markdown("""<div style="background: linear-gradient(90deg, #2563eb, #3b82f6); padding: 16px; border-radius: 16px; margin-bottom: 24px; color: white; font-weight: 800; font-size: 2.2rem; text-align: center; box-shadow: 0 8px 32px rgb(59 130 246 / 0.3);">
 NFL Elo & Live Odds Dashboard — Value Bets Highlighted
@@ -296,32 +283,22 @@ except Exception as e:
 ratings = run_elo_pipeline(hist_df)
 
 st.sidebar.header("Controls")
-use_api = st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
-api_key_input = st.sidebar.text_input("TheOddsAPI key (override)", value="")
-if api_key_input.strip():
-    API_KEY = api_key_input.strip()
-prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
-if prefer_book.strip():
-    BOOKMAKER_PREFERENCE = prefer_book.strip()
+fetch_odds = st.sidebar.checkbox("Fetch live odds from BetOnline.ag", value=True)
 
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks) - 1)
-
 week_games = sched_df[sched_df['week'] == selected_week]
 if week_games.empty:
     st.info(f"No games found for week {selected_week}.")
     st.stop()
 
-# Fetch odds if enabled
+# Fetch odds
 odds_index = {}
-if use_api:
+if fetch_odds:
     try:
-        api_data = get_theoddsapi_odds(API_KEY)
-        odds_index = parse_odds_data(api_data)
+        odds_index = get_betonline_odds()
     except Exception as e:
         st.error(f"Error fetching odds: {e}")
-
-value_bets = []
 
 # Render matchups
 for idx in range(0, len(week_games), 2):
@@ -332,15 +309,13 @@ for idx in range(0, len(week_games), 2):
         row = week_games.iloc[idx + i]
         team1 = row['team1']  # Away
         team2 = row['team2']  # Home
-        home_team = team2
 
+        home_team = team2
         r1 = ratings.get(team1, BASE_ELO)
         r2 = ratings.get(team2, BASE_ELO) + HOME_ADVANTAGE
-        exp1 = expected_score(r1, r2)  # Away probability
-        exp2 = 1 - exp1                # Home probability
-
+        exp1 = expected_score(r1, r2)
+        exp2 = 1 - exp1
         pred_spread = probability_to_spread(exp2, team_is_favorite=True)
-
         pred_ml_away = probability_to_moneyline(exp1)
         pred_ml_home = probability_to_moneyline(exp2)
 
