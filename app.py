@@ -48,22 +48,23 @@ def run_elo_pipeline(df):
     return dict(elo_ratings)
 
 # --- HEADLESS DRIVER ---
+# --- HEADLESS DRIVER ---
 def start_driver():
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless=new")        # headless mode
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    
-    # Specify your installed Chrome major version here
-    CHROME_MAJOR_VERSION = 139  # update to your Chrome version if different
-    driver = uc.Chrome(options=options, version_main=CHROME_MAJOR_VERSION)
+    options.add_argument("--disable-gpu")
+    # Let UC auto-detect Chrome and ChromeDriver
+    driver = uc.Chrome(options=options)
     return driver
+
 # --- SCRAPERS ---
 def scrape_fanduel():
     url = "https://sportsbook.fanduel.com/navigation/nfl"
     driver = start_driver()
     driver.get(url)
-    time.sleep(5)
+    time.sleep(5)  # allow page to load
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
 
