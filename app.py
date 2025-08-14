@@ -53,10 +53,11 @@ def start_driver():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # uc will automatically download the correct ChromeDriver
-    driver = uc.Chrome(options=options)
+    
+    # Specify your installed Chrome major version here
+    CHROME_MAJOR_VERSION = 139  # update to your Chrome version if different
+    driver = uc.Chrome(options=options, version_main=CHROME_MAJOR_VERSION)
     return driver
-
 # --- SCRAPERS ---
 def scrape_fanduel():
     url = "https://sportsbook.fanduel.com/navigation/nfl"
