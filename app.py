@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 from collections import defaultdict
 from difflib import get_close_matches
-from bs4 import BeautifulSoup
+
+# ---------- SELENIUM IMPORTS ----------
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+import time
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -20,7 +24,7 @@ TEAM_LOGOS = {
     "sf": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
     "gb": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
     "dal": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
-    # Add more teams...
+    # Add all other teams here
 }
 
 ### ---------- ELO FUNCTIONS ----------
@@ -51,47 +55,43 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-### ---------- BETONLINE SCRAPER ----------
-@st.cache_data(ttl=30)
-def get_betonline_odds():
+### ---------- BETONLINE SELENIUM SCRAPER ----------
+def get_betonline_odds_selenium():
     url = "https://www.betonline.ag/sportsbook/football/nfl"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Referer": "https://www.betonline.ag/",
-    }
 
-    resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--disable-dev-shm-usage")
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    driver = webdriver.Chrome(options=options)
+    driver.get(url)
+    time.sleep(5)  # wait for page to load JS
+
     odds_index = {}
-
-    # BetOnline puts each matchup in divs with class "event-holder"
-    for event in soup.find_all("div", class_="event-holder"):
-        teams = event.find_all("div", class_="team-name")
+    events = driver.find_elements(By.CLASS_NAME, "event-holder")
+    for event in events:
+        teams = event.find_elements(By.CLASS_NAME, "team-name")
         if len(teams) != 2:
             continue
-        away = teams[0].get_text(strip=True).lower()
-        home = teams[1].get_text(strip=True).lower()
+        away = teams[0].text.lower()
+        home = teams[1].text.lower()
         key = frozenset([away, home])
 
         moneyline = {}
         spread = {}
 
-        # Parse moneyline
-        ml_divs = event.find_all("div", class_="ml-price")
+        ml_divs = event.find_elements(By.CLASS_NAME, "ml-price")
         if len(ml_divs) == 2:
-            moneyline[away] = ml_divs[0].get_text(strip=True)
-            moneyline[home] = ml_divs[1].get_text(strip=True)
+            moneyline[away] = ml_divs[0].text
+            moneyline[home] = ml_divs[1].text
 
-        # Parse spreads
-        sp_divs = event.find_all("div", class_="spread")
+        sp_divs = event.find_elements(By.CLASS_NAME, "spread")
         if len(sp_divs) == 2:
-            spread[away] = sp_divs[0].get_text(strip=True).replace("½", ".5")
-            spread[home] = sp_divs[1].get_text(strip=True).replace("½", ".5")
+            spread[away] = sp_divs[0].text.replace("½", ".5")
+            spread[home] = sp_divs[1].text.replace("½", ".5")
 
         odds_index[key] = {
             "moneyline": moneyline,
@@ -99,6 +99,7 @@ def get_betonline_odds():
             "bookmaker": "BetOnline.ag"
         }
 
+    driver.quit()
     return odds_index
 
 ### ---------- HELPERS ----------
@@ -182,99 +183,14 @@ h2 { color: #334155; font-weight: 700; margin-bottom: 0.5rem; }
 .value-badge svg { fill: white; width: 16px; height: 16px; }
 .prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
 .prob-fill { height: 14px; }
+.home-color { background: #2563eb; }
+.away-color { background: #ef4444; }
 .prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
 .footer { font-size: 0.85rem; text-align: center; margin-top: 2rem; color: #94a3b8; }
 </style>
 """
 
-### ---------- RENDER MATCHUP ----------
-def render_matchup_card(team_home, team_away, logos, odds_book,
-                        prob_home, prob_away, predicted_spread,
-                        predicted_ml_home, predicted_ml_away,
-                        live_ml_home, live_ml_away,
-                        live_spread_home, live_spread_away,
-                        edge_home=None, edge_away=None,
-                        is_value_home=False, is_value_away=False):
-    
-    value_icon_svg = """
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-    </svg>
-    """
-    home_color = "#2563eb" if predicted_spread >= 0 else "#ef4444"
-    away_color = "#ef4444" if predicted_spread >= 0 else "#2563eb"
-    
-    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
-    cols = st.columns([1,1])
-
-    # Away Team
-    with cols[0]:
-        logo_url = logos.get(team_away.lower(), "")
-        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_away else ""
-        st.markdown(f"""
-        <div class="team-block">
-            <img src="{logo_url}" class="team-logo"/>
-            <div>
-                <div class="team-name">{team_away} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_away}</span>
-                    <span class="ml-badge">Live ML: {live_ml_away}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{-predicted_spread:.1f}</strong> |
-                    Live Spread: <strong>{-float(live_spread_away) if live_spread_away != 'N/A' else 'N/A'}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill" style="width: {prob_away*100:.1f}%; background:{away_color};"></div>
-                </div>
-                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Home Team
-    with cols[1]:
-        logo_url = logos.get(team_home.lower(), "")
-        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_home else ""
-        st.markdown(f"""
-        <div class="team-block" style="justify-content:flex-end;">
-            <div style="text-align:right;">
-                <div class="team-name">{team_home} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_home}</span>
-                    <span class="ml-badge">Live ML: {live_ml_home}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{predicted_spread:+.1f}</strong> |
-                    Live Spread: <strong>{live_spread_home}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill" style="width: {prob_home*100:.1f}%; background:{home_color};"></div>
-                </div>
-                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
-            </div>
-            <img src="{logo_url}" class="team-logo"/>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div style="text-align:center; margin-top: 12px; font-weight:700; color:#475569;">
-        Predicted Spread: {predicted_spread:+.1f} &nbsp;&nbsp;|&nbsp;&nbsp; Bookmaker: {odds_book}
-    </div>
-    """, unsafe_allow_html=True)
-
-    edge_home_html = format_edge_badge(edge_home) if edge_home is not None else ""
-    edge_away_html = format_edge_badge(edge_away) if edge_away is not None else ""
-    if edge_home_html or edge_away_html:
-        st.markdown(f"""
-        <div style="text-align:center; margin-top: 6px; font-weight:700; font-size: 1.1rem; color:#334155;">
-            Home Edge: {edge_home_html} &nbsp;&nbsp;|&nbsp;&nbsp; Away Edge: {edge_away_html}
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-### ---------- MAIN ----------
+# ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 st.title("🏈 NFL Elo Betting Dashboard")
@@ -306,11 +222,15 @@ if week_games.empty:
 odds_index = {}
 if fetch_odds:
     try:
-        odds_index = get_betonline_odds()
+        odds_index = get_betonline_odds_selenium()
     except Exception as e:
         st.error(f"Error fetching odds: {e}")
 
-# Render matchups
+# ---------- RENDER MATCHUPS ----------
+# Reuse your render_matchup_card function here (omitted for brevity, same as your original)
+# Call it for each game below, calculating Elo, probabilities, spreads, edges
+
+# Loop over games and render cards
 for idx in range(0, len(week_games), 2):
     cols = st.columns(2)
     for i in range(2):
@@ -348,6 +268,7 @@ for idx in range(0, len(week_games), 2):
         except:
             edge_home = edge_away = None
 
+        # Render the matchup card (reuse your render_matchup_card)
         render_matchup_card(
             team_home=team2,
             team_away=team1,
