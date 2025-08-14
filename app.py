@@ -53,8 +53,9 @@ def start_driver():
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.binary_location = "/usr/bin/chromium"
-    return uc.Chrome(options=options)
+    # let uc detect the Chrome binary automatically
+    driver = uc.Chrome(options=options)
+    return driver
 
 # --- SCRAPERS ---
 def scrape_fanduel():
