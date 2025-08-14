@@ -4,8 +4,8 @@ import numpy as np
 from collections import defaultdict
 from difflib import get_close_matches
 import time
-import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
+import undetected_chromedriver as uc
 
 # --- CONFIG ---
 BASE_ELO = 1500
@@ -47,24 +47,32 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- HEADLESS DRIVER ---
-# --- HEADLESS DRIVER ---
-def start_driver():
+# --- HEADLESS DRIVER WITH FALLBACK ---
+def start_driver(preferred_version=None):
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new")        # headless mode
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    # Let UC auto-detect Chrome and ChromeDriver
-    driver = uc.Chrome(options=options)
-    return driver
+    
+    try:
+        if preferred_version:
+            driver = uc.Chrome(options=options, version_main=preferred_version, force_download=True)
+        else:
+            driver = uc.Chrome(options=options)
+        return driver
+    except Exception as e:
+        print(f"[WARNING] Failed to start ChromeDriver v{preferred_version}: {e}")
+        print("[INFO] Falling back to auto-detect ChromeDriver")
+        driver = uc.Chrome(options=options)
+        return driver
 
 # --- SCRAPERS ---
-def scrape_fanduel():
+def scrape_fanduel(preferred_version=None):
     url = "https://sportsbook.fanduel.com/navigation/nfl"
-    driver = start_driver()
+    driver = start_driver(preferred_version)
     driver.get(url)
-    time.sleep(5)  # allow page to load
+    time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
     driver.quit()
 
@@ -81,9 +89,9 @@ def scrape_fanduel():
             }
     return odds_data
 
-def scrape_draftkings():
+def scrape_draftkings(preferred_version=None):
     url = "https://sportsbook.draftkings.com/leagues/football/nfl"
-    driver = start_driver()
+    driver = start_driver(preferred_version)
     driver.get(url)
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
@@ -102,9 +110,9 @@ def scrape_draftkings():
             }
     return odds_data
 
-def scrape_betonline():
+def scrape_betonline(preferred_version=None):
     url = "https://www.betonline.ag/sportsbook/football/nfl"
-    driver = start_driver()
+    driver = start_driver(preferred_version)
     driver.get(url)
     time.sleep(5)
     soup = BeautifulSoup(driver.page_source, "lxml")
@@ -171,6 +179,9 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
 st.set_page_config(layout="wide", page_title="NFL Elo Betting Dashboard")
 st.title("🏈 NFL Elo Betting Dashboard")
 source = st.sidebar.selectbox("Select Odds Source", ["FanDuel", "DraftKings", "BetOnline"])
+preferred_version = st.sidebar.text_input("Preferred Chrome version (optional for local testing)", "")
+
+preferred_version = int(preferred_version) if preferred_version.isdigit() else None
 
 # Load Excel
 try:
@@ -187,13 +198,13 @@ week_games = sched_df[sched_df['week'] == week_choice]
 
 # Fetch odds
 if source == "FanDuel":
-    odds_index = scrape_fanduel()
+    odds_index = scrape_fanduel(preferred_version)
 elif source == "DraftKings":
-    odds_index = scrape_draftkings()
+    odds_index = scrape_draftkings(preferred_version)
 else:
-    odds_index = scrape_betonline()
+    odds_index = scrape_betonline(preferred_version)
 
-# Card CSS
+# --- CARD CSS ---
 CARD_CSS = """
 <style>
 .matchup-card{border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 18px rgba(0,0,0,0.08);background:linear-gradient(180deg,#fff,#f9f9f9);}
@@ -206,7 +217,7 @@ CARD_CSS = """
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
 
-# Render cards
+# --- Render Cards ---
 for _, row in week_games.iterrows():
     t1, t2 = row['team1'], row['team2']
     home = row.get('home_team', t1)
