@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 from difflib import get_close_matches
-from playwright.sync_api import sync_playwright
+import requests
 
 # --- CONFIG ---
 BASE_ELO = 1500
@@ -46,21 +46,18 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- VEGASINSIDER SCRAPER ---
+# --- VEGASINSIDER SCRAPER USING REQUESTS ---
 VEGASINSIDER_URL = "https://www.vegasinsider.com/nfl/odds/las-vegas/"
 
 def scrape_vegasinsider():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(VEGASINSIDER_URL, timeout=60000)
-        page.wait_for_selector("table.linesTbl", timeout=15000)
-        table_html = page.inner_html("table.linesTbl")
-        browser.close()
-        df = pd.read_html(table_html)[0]
-        return df
-
-def process_and_save(df):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+    }
+    resp = requests.get(VEGASINSIDER_URL, headers=headers)
+    resp.raise_for_status()
+    
+    tables = pd.read_html(resp.text)
+    df = tables[0]  # usually the main table
     df = df.rename(columns={
         "Team": "Team1",
         "Spread": "Spread1",
@@ -70,6 +67,9 @@ def process_and_save(df):
         "ML.1": "ML2"
     })
     df = df[["Team1", "ML1", "Spread1", "Team2", "ML2", "Spread2"]]
+    return df
+
+def process_and_save(df):
     df.to_csv(CSV_FILE, index=False)
 
 def load_odds():
