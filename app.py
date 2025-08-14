@@ -57,17 +57,36 @@ def scrape_vegasinsider():
     resp.raise_for_status()
     
     tables = pd.read_html(resp.text)
-    df = tables[0]  # usually the main table
-    df = df.rename(columns={
-        "Team": "Team1",
-        "Spread": "Spread1",
-        "ML": "ML1",
-        "Team.1": "Team2",
-        "Spread.1": "Spread2",
-        "ML.1": "ML2"
+    df = tables[0]  # main odds table
+    df = df.dropna(axis=1, how='all')
+
+    col_lower = [c.lower() for c in df.columns]
+    def find_col(keywords):
+        for i, c in enumerate(col_lower):
+            if any(k in c for k in keywords):
+                return df.columns[i]
+        return None
+
+    team1_col = find_col(["team", "visitor"])
+    team2_col = find_col(["team", "home"])
+    spread1_col = find_col(["spread", "line"])
+    spread2_col = find_col(["spread.1", "line.1"])
+    ml1_col = find_col(["ml", "moneyline"])
+    ml2_col = find_col(["ml.1", "moneyline.1"])
+
+    if not all([team1_col, team2_col, spread1_col, spread2_col, ml1_col, ml2_col]):
+        raise ValueError("Could not detect all required columns in VegasInsider table.")
+
+    df_clean = pd.DataFrame({
+        "Team1": df[team1_col],
+        "Spread1": df[spread1_col],
+        "ML1": df[ml1_col],
+        "Team2": df[team2_col],
+        "Spread2": df[spread2_col],
+        "ML2": df[ml2_col],
     })
-    df = df[["Team1", "ML1", "Spread1", "Team2", "ML2", "Spread2"]]
-    return df
+
+    return df_clean
 
 def process_and_save(df):
     df.to_csv(CSV_FILE, index=False)
@@ -142,7 +161,7 @@ try:
     df = scrape_vegasinsider()
     process_and_save(df)
 except Exception as e:
-    st.warning(f"Failed to scrape VegasInsider: {e}")
+    st.warning(f"Failed to scrape VegasInsider, using last saved CSV if available: {e}")
 
 odds_index = load_odds()
 
@@ -189,15 +208,19 @@ for _, row in week_games.iterrows():
     match_key = fuzzy_find_team_in_odds(t1, odds_index.keys())
     ml_t1 = ml_t2 = sp_t1 = sp_t2 = "N/A"
     book = "N/A"
-    implied_p1 = implied_p2 = None
+    implied_str_t1 = implied_str_t2 = "N/A"
     edge_t1 = edge_t2 = None
+
     if match_key:
         entry = odds_index[match_key]
         ml_t1, ml_t2 = entry['moneyline'].get(t1.lower(), "N/A"), entry['moneyline'].get(t2.lower(), "N/A")
         sp_t1, sp_t2 = entry['spread'].get(t1.lower(), "N/A"), entry['spread'].get(t2.lower(), "N/A")
         book = entry['bookmaker']
+
         implied_p1 = moneyline_to_probability(ml_t1)
         implied_p2 = moneyline_to_probability(ml_t2)
+        implied_str_t1 = f"{implied_p1:.1%}" if implied_p1 is not None else "N/A"
+        implied_str_t2 = f"{implied_p2:.1%}" if implied_p2 is not None else "N/A"
         edge_t1 = None if implied_p1 is None else p1 - implied_p1
         edge_t2 = None if implied_p2 is None else p2 - implied_p2
 
@@ -206,7 +229,7 @@ for _, row in week_games.iterrows():
         logo1 = TEAM_LOGOS.get(t1.lower(), "")
         st.markdown(f"<div class='team-block'><img src='{logo1}' width='56'/>"
                     f"<div><div class='team-name'>{t1}</div>"
-                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%} | Implied: {implied_p1:.1% if implied_p1 else 'N/A'}</div></div></div>",
+                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%} | Implied: {implied_str_t1}</div></div></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p1*100:.1f}%;background:{'#16a34a' if edge_t1 and edge_t1>0.05 else '#ef4444' if edge_t1 and edge_t1<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='small-muted'>{p1:.1%} win probability</div>", unsafe_allow_html=True)
@@ -216,7 +239,7 @@ for _, row in week_games.iterrows():
         logo2 = TEAM_LOGOS.get(t2.lower(), "")
         st.markdown(f"<div class='team-block' style='justify-content:flex-end'><div>"
                     f"<div class='team-name' style='text-align:right'>{t2}</div>"
-                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%} | Implied: {implied_p2:.1% if implied_p2 else 'N/A'}</div></div>"
+                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%} | Implied: {implied_str_t2}</div></div>"
                     f"<img src='{logo2}' width='56'/></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p2*100:.1f}%;background:{'#16a34a' if edge_t2 and edge_t2>0.05 else '#ef4444' if edge_t2 and edge_t2<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
