@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 from difflib import get_close_matches
-import requests
+import os
 
 # --- CONFIG ---
 BASE_ELO = 1500
@@ -12,7 +12,7 @@ HOME_ADVANTAGE = 65
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
-CSV_FILE = "odds.csv"
+VEGAS_CSV = "vegas_odds.csv"
 
 TEAM_LOGOS = {
     "kansas city chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
@@ -46,77 +46,51 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- VEGASINSIDER SCRAPER USING REQUESTS ---
-VEGASINSIDER_URL = "https://www.vegasinsider.com/nfl/odds/las-vegas/"
-
+# --- VEGASINSIDER SCRAPER ---
 def scrape_vegasinsider():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-    }
-    resp = requests.get(VEGASINSIDER_URL, headers=headers)
-    resp.raise_for_status()
-    
-    tables = pd.read_html(resp.text)
-    df = tables[0]  # main odds table
-    df = df.dropna(axis=1, how='all')
-
-    col_lower = [c.lower() for c in df.columns]
-    def find_col(keywords):
-        for i, c in enumerate(col_lower):
-            if any(k in c for k in keywords):
-                return df.columns[i]
-        return None
-
-    team1_col = find_col(["team", "visitor"])
-    team2_col = find_col(["team", "home"])
-    spread1_col = find_col(["spread", "line"])
-    spread2_col = find_col(["spread.1", "line.1"])
-    ml1_col = find_col(["ml", "moneyline"])
-    ml2_col = find_col(["ml.1", "moneyline.1"])
-
-    if not all([team1_col, team2_col, spread1_col, spread2_col, ml1_col, ml2_col]):
-        raise ValueError("Could not detect all required columns in VegasInsider table.")
-
-    df_clean = pd.DataFrame({
-        "Team1": df[team1_col],
-        "Spread1": df[spread1_col],
-        "ML1": df[ml1_col],
-        "Team2": df[team2_col],
-        "Spread2": df[spread2_col],
-        "ML2": df[ml2_col],
-    })
-
-    return df_clean
-
-def process_and_save(df):
-    df.to_csv(CSV_FILE, index=False)
-
-def load_odds():
     try:
-        df = pd.read_csv(CSV_FILE)
-        odds_index = {}
-        for _, row in df.iterrows():
-            teams = [row['Team1'].lower(), row['Team2'].lower()]
-            odds_index[frozenset(teams)] = {
-                "moneyline": {teams[0]: row['ML1'], teams[1]: row['ML2']},
-                "spread": {teams[0]: row['Spread1'], teams[1]: row['Spread2']},
-                "bookmaker": "VegasInsider"
-            }
-        return odds_index
+        url = "https://www.vegasinsider.com/nfl/odds/las-vegas/"
+        tables = pd.read_html(url)
+        df = tables[0]
+
+        # Hardcoded column mapping
+        df_clean = pd.DataFrame({
+            "Team1": df["Visitor Team"],       
+            "ML1": df["Visitor ML"],           
+            "Spread1": df["Visitor Spread"],   
+            "Team2": df["Home Team"],          
+            "ML2": df["Home ML"],              
+            "Spread2": df["Home Spread"],      
+        })
+
+        df_clean.to_csv(VEGAS_CSV, index=False)
+        st.success(f"VegasInsider CSV refreshed: {VEGAS_CSV}")
+        return df_clean
+
     except Exception as e:
-        st.warning(f"Failed to load odds CSV: {e}")
-        return {}
+        st.warning(f"Failed to scrape VegasInsider: {e}")
+        if os.path.exists(VEGAS_CSV):
+            st.info(f"Using last saved CSV: {VEGAS_CSV}")
+            return pd.read_csv(VEGAS_CSV)
+        else:
+            st.error("No CSV available to load odds.")
+            return pd.DataFrame(columns=["Team1","ML1","Spread1","Team2","ML2","Spread2"])
 
 # --- HELPERS ---
 def moneyline_to_probability(ml):
     try:
-        ml = str(ml)
-        if ml.startswith('+'):
-            val = int(ml[1:])
-            return 100.0 / (val + 100.0)
-        if ml.startswith('-'):
-            val = int(ml[1:])
-            return val / (val + 100.0)
+        if isinstance(ml, str):
+            if ml.startswith('+'):
+                val = int(ml[1:])
+                return 100.0 / (val + 100.0)
+            elif ml.startswith('-'):
+                val = int(ml[1:])
+                return val / (val + 100.0)
+        elif isinstance(ml, (int, float)):
+            if ml > 0:
+                return 100 / (ml + 100)
+            else:
+                return -ml / (-ml + 100)
     except:
         return None
     return None
@@ -156,15 +130,6 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
 st.set_page_config(layout="wide", page_title="NFL Elo Betting Dashboard")
 st.title("🏈 NFL Elo Betting Dashboard")
 
-# --- Refresh CSV & load odds ---
-try:
-    df = scrape_vegasinsider()
-    process_and_save(df)
-except Exception as e:
-    st.warning(f"Failed to scrape VegasInsider, using last saved CSV if available: {e}")
-
-odds_index = load_odds()
-
 # Load Excel
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
@@ -178,7 +143,19 @@ weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 week_choice = st.selectbox("Select Week", weeks, index=len(weeks)-1)
 week_games = sched_df[sched_df['week'] == week_choice]
 
-# --- Render Cards ---
+# Fetch VegasInsider odds
+odds_df = scrape_vegasinsider()
+
+# Convert to a dictionary for lookup
+odds_index = {}
+for _, row in odds_df.iterrows():
+    odds_index[frozenset([row.Team1.lower(), row.Team2.lower()])] = {
+        "moneyline": {row.Team1.lower(): row.ML1, row.Team2.lower(): row.ML2},
+        "spread": {row.Team1.lower(): row.Spread1, row.Team2.lower(): row.Spread2},
+        "bookmaker": "VegasInsider"
+    }
+
+# --- CARD CSS ---
 CARD_CSS = """
 <style>
 .matchup-card{border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 18px rgba(0,0,0,0.08);background:linear-gradient(180deg,#fff,#f9f9f9);}
@@ -191,6 +168,7 @@ CARD_CSS = """
 """
 st.markdown(CARD_CSS, unsafe_allow_html=True)
 
+# --- RENDER MATCHUPS ---
 for _, row in week_games.iterrows():
     t1, t2 = row['team1'], row['team2']
     home = row.get('home_team', t1)
@@ -208,28 +186,23 @@ for _, row in week_games.iterrows():
     match_key = fuzzy_find_team_in_odds(t1, odds_index.keys())
     ml_t1 = ml_t2 = sp_t1 = sp_t2 = "N/A"
     book = "N/A"
-    implied_str_t1 = implied_str_t2 = "N/A"
-    edge_t1 = edge_t2 = None
-
     if match_key:
         entry = odds_index[match_key]
         ml_t1, ml_t2 = entry['moneyline'].get(t1.lower(), "N/A"), entry['moneyline'].get(t2.lower(), "N/A")
         sp_t1, sp_t2 = entry['spread'].get(t1.lower(), "N/A"), entry['spread'].get(t2.lower(), "N/A")
         book = entry['bookmaker']
 
-        implied_p1 = moneyline_to_probability(ml_t1)
-        implied_p2 = moneyline_to_probability(ml_t2)
-        implied_str_t1 = f"{implied_p1:.1%}" if implied_p1 is not None else "N/A"
-        implied_str_t2 = f"{implied_p2:.1%}" if implied_p2 is not None else "N/A"
-        edge_t1 = None if implied_p1 is None else p1 - implied_p1
-        edge_t2 = None if implied_p2 is None else p2 - implied_p2
+    implied_p1 = moneyline_to_probability(ml_t1)
+    implied_p2 = moneyline_to_probability(ml_t2)
+    edge_t1 = None if implied_p1 is None else p1 - implied_p1
+    edge_t2 = None if implied_p2 is None else p2 - implied_p2
 
     cols = st.columns([1, 1])
     with cols[0]:
         logo1 = TEAM_LOGOS.get(t1.lower(), "")
         st.markdown(f"<div class='team-block'><img src='{logo1}' width='56'/>"
                     f"<div><div class='team-name'>{t1}</div>"
-                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%} | Implied: {implied_str_t1}</div></div></div>",
+                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%}</div></div></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p1*100:.1f}%;background:{'#16a34a' if edge_t1 and edge_t1>0.05 else '#ef4444' if edge_t1 and edge_t1<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
         st.markdown(f"<div class='small-muted'>{p1:.1%} win probability</div>", unsafe_allow_html=True)
@@ -239,7 +212,7 @@ for _, row in week_games.iterrows():
         logo2 = TEAM_LOGOS.get(t2.lower(), "")
         st.markdown(f"<div class='team-block' style='justify-content:flex-end'><div>"
                     f"<div class='team-name' style='text-align:right'>{t2}</div>"
-                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%} | Implied: {implied_str_t2}</div></div>"
+                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%}</div></div>"
                     f"<img src='{logo2}' width='56'/></div>",
                     unsafe_allow_html=True)
         st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p2*100:.1f}%;background:{'#16a34a' if edge_t2 and edge_t2>0.05 else '#ef4444' if edge_t2 and edge_t2<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
