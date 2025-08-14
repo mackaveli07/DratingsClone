@@ -55,40 +55,50 @@ def run_elo_pipeline(df):
 @st.cache_data(ttl=30)
 def get_betonline_odds():
     url = "https://www.betonline.ag/sportsbook/football/nfl"
-    resp = requests.get(url, timeout=15)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "lxml")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Referer": "https://www.betonline.ag/",
+    }
 
+    resp = requests.get(url, headers=headers, timeout=15)
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
     odds_index = {}
-    games = soup.find_all("div", class_="eventLine-book")
-    for game in games:
-        teams = game.find_all("div", class_="eventLine-team")
+
+    # BetOnline puts each matchup in divs with class "event-holder"
+    for event in soup.find_all("div", class_="event-holder"):
+        teams = event.find_all("div", class_="team-name")
         if len(teams) != 2:
             continue
-        team1 = teams[0].get_text(strip=True).lower()  # Away
-        team2 = teams[1].get_text(strip=True).lower()  # Home
-        key = frozenset([team1, team2])
+        away = teams[0].get_text(strip=True).lower()
+        home = teams[1].get_text(strip=True).lower()
+        key = frozenset([away, home])
 
-        # Moneyline
-        ml = {}
-        ml_outcomes = game.find_all("div", class_="eventLine-book-value")
-        if len(ml_outcomes) >= 2:
-            ml[team1] = ml_outcomes[0].get_text(strip=True)
-            ml[team2] = ml_outcomes[1].get_text(strip=True)
+        moneyline = {}
+        spread = {}
 
-        # Spread (numeric)
-        sp = {}
-        sp_outcomes = game.find_all("div", class_="eventLine-spread")
-        if len(sp_outcomes) >= 2:
-            for i, team in enumerate([team1, team2]):
-                text = sp_outcomes[i].get_text(strip=True).replace("+","").replace("PK","0").replace("EVEN","0")
-                try:
-                    sp[team] = float(text)
-                except:
-                    sp[team] = 0.0
+        # Parse moneyline
+        ml_divs = event.find_all("div", class_="ml-price")
+        if len(ml_divs) == 2:
+            moneyline[away] = ml_divs[0].get_text(strip=True)
+            moneyline[home] = ml_divs[1].get_text(strip=True)
 
-        odds_index[key] = {"moneyline": ml, "spread": sp, "bookmaker": "BetOnline"}
-    
+        # Parse spreads
+        sp_divs = event.find_all("div", class_="spread")
+        if len(sp_divs) == 2:
+            spread[away] = sp_divs[0].get_text(strip=True).replace("½", ".5")
+            spread[home] = sp_divs[1].get_text(strip=True).replace("½", ".5")
+
+        odds_index[key] = {
+            "moneyline": moneyline,
+            "spread": spread,
+            "bookmaker": "BetOnline.ag"
+        }
+
     return odds_index
 
 ### ---------- HELPERS ----------
