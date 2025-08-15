@@ -301,4 +301,4 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
     st.markdown("</div>", unsafe_allow_html=True)
 
 ### ---------- MAIN ----------
-st.set_page_config(page_title="NFL Elo + Odds Dashboard
+st.set_page_config(page_title="NFL Elo + Odds Dashboard")
