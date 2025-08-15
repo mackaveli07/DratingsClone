@@ -78,7 +78,7 @@ def run_elo_pipeline(df):
         for _, row in games.iterrows():
             team1, team2 = row.get("team1"), row.get("team2")
             score1, score2 = row.get("score1", 0), row.get("score2",0)
-            home_team = row.get("home_team", team2)
+            home_team = row.get("team2", team2)
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
 
@@ -240,8 +240,8 @@ if prefer_book.strip(): BOOKMAKER_PREFERENCE=prefer_book.strip()
 
 # Manual column selection
 st.sidebar.header("Schedule Columns Mapping")
-HOME_COL = st.sidebar.selectbox("Select Home Team Column", options=sched_df.columns)
-AWAY_COL = st.sidebar.selectbox("Select Away Team Column", options=sched_df.columns)
+HOME_COL = st.sidebar.selectbox("Select Home Team Column", options=sched_df.columns, index= sched_df.columns.get_loc("team2") if "team2" in sched_df.columns else 0)
+AWAY_COL = st.sidebar.selectbox("Select Away Team Column", options=sched_df.columns, index= sched_df.columns.get_loc("team1") if "team1" in sched_df.columns else 1)
 
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
