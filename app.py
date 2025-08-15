@@ -1,27 +1,34 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 from collections import defaultdict
 from difflib import get_close_matches
-import os
 
-# --- CONFIG ---
+### ---------- CONFIG ----------
+API_KEY = "4c39fd0413dbcc55279d85ab18bcc6f0"  # Replace with your TheOddsAPI key
+SPORT_KEY = "americanfootball_nfl"
+REGION = "us"
+MARKETS = "h2h,spreads"
+BOOKMAKER_PREFERENCE = None
+
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
+
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
-VEGAS_CSV = "vegas_odds.csv"
 
 TEAM_LOGOS = {
-    "kansas city chiefs": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
-    "san francisco 49ers": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
-    "green bay packers": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
-    "dallas cowboys": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+    "kc": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png",
+    "sf": "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+    "gb": "https://a.espncdn.com/i/teamlogos/nfl/500/gb.png",
+    "dal": "https://a.espncdn.com/i/teamlogos/nfl/500/dal.png",
+    # Add more teams...
 }
 
-# --- ELO FUNCTIONS ---
+### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
@@ -31,193 +38,349 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
+
     expected1 = expected_score(r1, r2)
     expected2 = expected_score(r2, r1)
+
     actual1 = 1 if score1 > score2 else 0
     actual2 = 1 - actual1
+
     elo_ratings[team1] += K * (actual1 - expected1)
     elo_ratings[team2] += K * (actual2 - expected2)
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
     grouped = df.groupby(["season", "week"])
-    for _, games in grouped:
+    for (_, _), games in grouped:
         for _, row in games.iterrows():
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
     return dict(elo_ratings)
 
-# --- VEGASINSIDER SCRAPER ---
-def scrape_vegasinsider():
-    try:
-        url = "https://www.vegasinsider.com/nfl/odds/las-vegas/"
-        tables = pd.read_html(url)
-        df = tables[0]
+### ---------- ODDS API ----------
+@st.cache_data(ttl=30)
+def get_theoddsapi_odds(api_key):
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
+    params = {
+        "apiKey": api_key,
+        "regions": REGION,
+        "markets": MARKETS,
+        "oddsFormat": "american",
+        "dateFormat": "iso"
+    }
+    resp = requests.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
 
-        # Hardcoded column mapping
-        df_clean = pd.DataFrame({
-            "Team1": df["Visitor Team"],       
-            "ML1": df["Visitor ML"],           
-            "Spread1": df["Visitor Spread"],   
-            "Team2": df["Home Team"],          
-            "ML2": df["Home ML"],              
-            "Spread2": df["Home Spread"],      
-        })
+def pick_bookmaker(bookmakers):
+    if not bookmakers:
+        return None
+    if BOOKMAKER_PREFERENCE:
+        for b in bookmakers:
+            if b.get("key") == BOOKMAKER_PREFERENCE:
+                return b
+    return bookmakers[0]
 
-        df_clean.to_csv(VEGAS_CSV, index=False)
-        st.success(f"VegasInsider CSV refreshed: {VEGAS_CSV}")
-        return df_clean
+def parse_odds_data(api_data):
+    odds_index = {}
+    for game in api_data:
+        teams = game.get("teams", [])
+        if len(teams) != 2:
+            continue
+        t0, t1 = teams
+        key = frozenset([t0.lower(), t1.lower()])
+        bookmakers = game.get("bookmakers", [])
+        bm = pick_bookmaker(bookmakers)
+        if not bm:
+            continue
+        markets = bm.get("markets", [])
+        ml = {}
+        sp = {}
+        for market in markets:
+            if market.get("key") == "h2h":
+                for outcome in market.get("outcomes", []):
+                    ml[outcome.get("name", "").lower()] = outcome.get("price")
+            elif market.get("key") == "spreads":
+                for outcome in market.get("outcomes", []):
+                    sp[outcome.get("name", "").lower()] = outcome.get("point")
+        odds_index[key] = {"moneyline": ml, "spread": sp, "bookmaker": bm.get("title", bm.get("key"))}
+    return odds_index
 
-    except Exception as e:
-        st.warning(f"Failed to scrape VegasInsider: {e}")
-        if os.path.exists(VEGAS_CSV):
-            st.info(f"Using last saved CSV: {VEGAS_CSV}")
-            return pd.read_csv(VEGAS_CSV)
-        else:
-            st.error("No CSV available to load odds.")
-            return pd.DataFrame(columns=["Team1","ML1","Spread1","Team2","ML2","Spread2"])
-
-# --- HELPERS ---
+### ---------- HELPERS ----------
 def moneyline_to_probability(ml):
     try:
-        if isinstance(ml, str):
-            if ml.startswith('+'):
-                val = int(ml[1:])
-                return 100.0 / (val + 100.0)
-            elif ml.startswith('-'):
-                val = int(ml[1:])
-                return val / (val + 100.0)
-        elif isinstance(ml, (int, float)):
-            if ml > 0:
-                return 100 / (ml + 100)
-            else:
-                return -ml / (-ml + 100)
-    except:
+        if ml in [None, "N/A", ""]:
+            return None
+        s = str(ml)
+        if s.startswith('+'):
+            val = int(s.replace('+',''))
+            return 100.0 / (val + 100.0)
+        if s.startswith('-'):
+            val = int(s.replace('-',''))
+            return val / (val + 100.0)
+        val = int(s)
+        if val > 0:
+            return 100.0 / (val + 100.0)
+        else:
+            val = abs(val)
+            return val / (val + 100.0)
+    except Exception:
         return None
-    return None
+
+def probability_to_moneyline(prob):
+    if prob is None: return "N/A"
+    if prob >= 0.5:
+        return f"-{round(100 * prob / (1 - prob))}"
+    else:
+        return f"+{round(100 * (1 - prob) / prob)}"
 
 def probability_to_spread(prob, team_is_favorite=True):
     b = 0.23
     prob = max(min(prob, 0.999), 0.001)
     spread = np.log(prob / (1 - prob)) / b
     spread = round(spread * 2) / 2
-    return spread if team_is_favorite else -spread
-
-def probability_to_cover(prob_team, spread):
-    win_prob_cover = 1 / (1 + np.exp(-0.23 * (-spread)))
-    return win_prob_cover if prob_team > 0.5 else 1 - win_prob_cover
+    if not team_is_favorite:
+        spread = -spread
+    return float(spread)
 
 def format_edge_badge(edge):
-    if edge is None: return ""
+    if edge is None:
+        return ""
     if edge > 0.05:
-        return f'<span style="color:green;font-weight:bold">VALUE +{edge:.1%}</span>'
+        return f'<span style="color:#16a34a;font-weight:700">▲ +{edge:.1%}</span>'
     if edge < -0.05:
-        return f'<span style="color:red;font-weight:bold">NEG {edge:.1%}</span>'
-    return f'<span style="color:gray">{edge:.1%}</span>'
+        return f'<span style="color:#dc2626;font-weight:700">▼ -{abs(edge):.1%}</span>'
+    return f'<span style="color:#6b7280;font-weight:700">≈ {edge:.1%}</span>'
 
 def fuzzy_find_team_in_odds(team_name, odds_index_keys):
     name = team_name.lower()
     for key in odds_index_keys:
-        if name in key:
-            return key
-    matches = get_close_matches(name, [t for key in odds_index_keys for t in key], n=1, cutoff=0.6)
+        for tk in key:
+            if name == tk:
+                return key
+    candidates = []
+    for key in odds_index_keys:
+        for tk in key:
+            candidates.append(tk)
+    candidates = list(set(candidates))
+    matches = get_close_matches(name, candidates, n=1, cutoff=0.6)
     if matches:
+        best = matches[0]
         for k in odds_index_keys:
-            if matches[0] in k:
+            if best in k:
                 return k
     return None
 
-# --- UI ---
-st.set_page_config(layout="wide", page_title="NFL Elo Betting Dashboard")
-st.title("🏈 NFL Elo Betting Dashboard")
+### ---------- CSS ----------
+APP_CSS = """
+<style>
+body { background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; color: #1f2937; }
+h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
+h2 { color: #334155; font-weight: 700; margin-bottom: 0.5rem; }
+.matchup-card { background: #ffffffcc; border-radius: 15px; padding: 16px; margin: 12px 8px; box-shadow: 0 12px 24px rgb(0 0 0 / 0.1); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.matchup-card:hover { transform: translateY(-8px); box-shadow: 0 20px 40px rgb(0 0 0 / 0.15); }
+.team-block { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; }
+.team-logo { width: 56px; height: 56px; border-radius: 50%; box-shadow: 0 4px 10px rgb(0 0 0 / 0.1); object-fit: contain; background: white; }
+.team-name { font-weight: 700; font-size: 20px; color: #1e293b; flex-grow: 1; }
+.ml-badge { font-weight: 700; padding: 5px 10px; border-radius: 8px; background: #e0e7ff; color: #3730a3; font-size: 0.9rem; margin-right: 8px; }
+.value-badge { background: linear-gradient(45deg, #16a34a, #22c55e); color: white; font-weight: 700; padding: 4px 12px; border-radius: 12px; font-size: 0.8rem; margin-left: 10px; display: inline-flex; align-items: center; gap: 6px; }
+.value-badge svg { fill: white; width: 16px; height: 16px; }
+.prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
+.prob-fill { height: 14px; }
+.home-color { background: #2563eb; }
+.away-color { background: #ef4444; }
+.prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
+.footer { font-size: 0.85rem; text-align: center; margin-top: 2rem; color: #94a3b8; }
+</style>
+"""
 
-# Load Excel
+### ---------- RENDER MATCHUP ----------
+def render_matchup_card(team_home, team_away, logos, odds_book,
+                        prob_home, prob_away, predicted_spread,
+                        predicted_ml_home, predicted_ml_away,
+                        live_ml_home, live_ml_away,
+                        live_spread_home, live_spread_away,
+                        edge_home=None, edge_away=None,
+                        is_value_home=False, is_value_away=False):
+    value_icon_svg = """
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+    """
+    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
+    cols = st.columns([1,1])
+
+    # Away Team (left)
+    with cols[0]:
+        logo_url = logos.get(team_away.lower(), "")
+        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_away else ""
+        st.markdown(f"""
+        <div class="team-block">
+            <img src="{logo_url}" class="team-logo"/>
+            <div>
+                <div class="team-name">{team_away} {value_html}</div>
+                <div>
+                    <span class="ml-badge">Model ML: {predicted_ml_away}</span>
+                    <span class="ml-badge">Live ML: {live_ml_away}</span>
+                </div>
+                <div>
+                    Model Spread: <strong>{-predicted_spread:.1f}</strong> |
+                    Live Spread: <strong>{-float(live_spread_away) if live_spread_away != 'N/A' else 'N/A'}</strong>
+                </div>
+                <div class="prob-bar">
+                    <div class="prob-fill away-color" style="width: {prob_away*100:.1f}%;"></div>
+                </div>
+                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # Home Team (right)
+    with cols[1]:
+        logo_url = logos.get(team_home.lower(), "")
+        value_html = f'<span class="value-badge">{value_icon_svg} VALUE</span>' if is_value_home else ""
+        st.markdown(f"""
+        <div class="team-block" style="justify-content:flex-end;">
+            <div style="text-align:right;">
+                <div class="team-name">{team_home} {value_html}</div>
+                <div>
+                    <span class="ml-badge">Model ML: {predicted_ml_home}</span>
+                    <span class="ml-badge">Live ML: {live_ml_home}</span>
+                </div>
+                <div>
+                    Model Spread: <strong>{predicted_spread:+.1f}</strong> |
+                    Live Spread: <strong>{live_spread_home}</strong>
+                </div>
+                <div class="prob-bar">
+                    <div class="prob-fill home-color" style="width: {prob_home*100:.1f}%;"></div>
+                </div>
+                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
+            </div>
+            <img src="{logo_url}" class="team-logo"/>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="text-align:center; margin-top: 12px; font-weight:700; color:#475569;">
+        Predicted Spread: {predicted_spread:+.1f} &nbsp;&nbsp;|&nbsp;&nbsp; Bookmaker: {odds_book}
+    </div>
+    """, unsafe_allow_html=True)
+
+    edge_home_html = format_edge_badge(edge_home) if edge_home is not None else ""
+    edge_away_html = format_edge_badge(edge_away) if edge_away is not None else ""
+    if edge_home_html or edge_away_html:
+        st.markdown(f"""
+        <div style="text-align:center; margin-top: 6px; font-weight:700; font-size: 1.1rem; color:#334155;">
+            Home Edge: {edge_home_html} &nbsp;&nbsp;|&nbsp;&nbsp; Away Edge: {edge_away_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+### ---------- MAIN ----------
+st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
+st.markdown(APP_CSS, unsafe_allow_html=True)
+
+st.title("🏈 NFL Elo Betting Dashboard")
+st.markdown("""<div style="background: linear-gradient(90deg, #2563eb, #3b82f6); padding: 16px; border-radius: 16px; margin-bottom: 24px; color: white; font-weight: 800; font-size: 2.2rem; text-align: center; box-shadow: 0 8px 32px rgb(59 130 246 / 0.3);">
+NFL Elo & Live Odds Dashboard — Value Bets Highlighted
+</div>""", unsafe_allow_html=True)
+
+# Load data
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
-except FileNotFoundError:
-    st.error(f"Excel file '{EXCEL_FILE}' not found.")
+except Exception as e:
+    st.error(f"Error loading Excel file or sheets: {e}")
     st.stop()
 
 ratings = run_elo_pipeline(hist_df)
-weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
-week_choice = st.selectbox("Select Week", weeks, index=len(weeks)-1)
-week_games = sched_df[sched_df['week'] == week_choice]
 
-# Fetch VegasInsider odds
-odds_df = scrape_vegasinsider()
+st.sidebar.header("Controls")
+use_api = st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
+api_key_input = st.sidebar.text_input("TheOddsAPI key (override)", value="")
+if api_key_input.strip():
+    API_KEY = api_key_input.strip()
+prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
+if prefer_book.strip():
+    BOOKMAKER_PREFERENCE = prefer_book.strip()
 
-# Convert to a dictionary for lookup
+available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
+selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks) - 1)
+
+week_games = sched_df[sched_df['week'] == selected_week]
+if week_games.empty:
+    st.info(f"No games found for week {selected_week}.")
+    st.stop()
+
+# Fetch odds if enabled
 odds_index = {}
-for _, row in odds_df.iterrows():
-    odds_index[frozenset([row.Team1.lower(), row.Team2.lower()])] = {
-        "moneyline": {row.Team1.lower(): row.ML1, row.Team2.lower(): row.ML2},
-        "spread": {row.Team1.lower(): row.Spread1, row.Team2.lower(): row.Spread2},
-        "bookmaker": "VegasInsider"
-    }
+if use_api:
+    try:
+        api_data = get_theoddsapi_odds(API_KEY)
+        odds_index = parse_odds_data(api_data)
+    except Exception as e:
+        st.error(f"Error fetching odds: {e}")
 
-# --- CARD CSS ---
-CARD_CSS = """
-<style>
-.matchup-card{border-radius:10px;padding:12px;margin-bottom:12px;box-shadow:0 4px 18px rgba(0,0,0,0.08);background:linear-gradient(180deg,#fff,#f9f9f9);}
-.team-block{display:flex;align-items:center;gap:12px;}
-.team-name{font-weight:700;font-size:18px;}
-.small-muted{color:#6b7280;font-size:12px;}
-.prob-bar{height:10px;border-radius:6px;overflow:hidden;background:#eee;margin-top:6px;}
-.prob-fill{height:10px;}
-</style>
-"""
-st.markdown(CARD_CSS, unsafe_allow_html=True)
+value_bets = []
 
-# --- RENDER MATCHUPS ---
-for _, row in week_games.iterrows():
-    t1, t2 = row['team1'], row['team2']
-    home = row.get('home_team', t1)
+# Render matchups
+for idx in range(0, len(week_games), 2):
+    cols = st.columns(2)
+    for i in range(2):
+        if idx + i >= len(week_games):
+            break
+        row = week_games.iloc[idx + i]
+        team1 = row['team1']  # Away
+        team2 = row['team2']  # Home
+        home_team = team2
 
-    r1 = ratings.get(t1, BASE_ELO) + (HOME_ADVANTAGE if home == t1 else 0)
-    r2 = ratings.get(t2, BASE_ELO) + (HOME_ADVANTAGE if home == t2 else 0)
-    p1, p2 = expected_score(r1, r2), 1 - expected_score(r1, r2)
+        r1 = ratings.get(team1, BASE_ELO)
+        r2 = ratings.get(team2, BASE_ELO) + HOME_ADVANTAGE
+        exp1 = expected_score(r1, r2)  # Away probability
+        exp2 = 1 - exp1                # Home probability
 
-    pred_spread_t1 = probability_to_spread(p1, p1 > p2)
-    pred_spread_t2 = -pred_spread_t1
+        pred_spread = probability_to_spread(exp2, team_is_favorite=True)
 
-    cover_prob_t1 = probability_to_cover(p1, float(pred_spread_t1))
-    cover_prob_t2 = probability_to_cover(p2, float(pred_spread_t2))
+        pred_ml_away = probability_to_moneyline(exp1)
+        pred_ml_home = probability_to_moneyline(exp2)
 
-    match_key = fuzzy_find_team_in_odds(t1, odds_index.keys())
-    ml_t1 = ml_t2 = sp_t1 = sp_t2 = "N/A"
-    book = "N/A"
-    if match_key:
-        entry = odds_index[match_key]
-        ml_t1, ml_t2 = entry['moneyline'].get(t1.lower(), "N/A"), entry['moneyline'].get(t2.lower(), "N/A")
-        sp_t1, sp_t2 = entry['spread'].get(t1.lower(), "N/A"), entry['spread'].get(t2.lower(), "N/A")
-        book = entry['bookmaker']
+        odds_key = fuzzy_find_team_in_odds(team1, odds_index.keys())
+        live_ml_1 = live_ml_2 = "N/A"
+        live_spread_1 = live_spread_2 = "N/A"
+        bookmaker_name = "N/A"
 
-    implied_p1 = moneyline_to_probability(ml_t1)
-    implied_p2 = moneyline_to_probability(ml_t2)
-    edge_t1 = None if implied_p1 is None else p1 - implied_p1
-    edge_t2 = None if implied_p2 is None else p2 - implied_p2
+        if odds_key:
+            live_ml_1 = odds_index[odds_key]["moneyline"].get(team1.lower(), "N/A")
+            live_ml_2 = odds_index[odds_key]["moneyline"].get(team2.lower(), "N/A")
+            live_spread_1 = odds_index[odds_key]["spread"].get(team1.lower(), "N/A")
+            live_spread_2 = odds_index[odds_key]["spread"].get(team2.lower(), "N/A")
+            bookmaker_name = odds_index[odds_key]["bookmaker"]
 
-    cols = st.columns([1, 1])
-    with cols[0]:
-        logo1 = TEAM_LOGOS.get(t1.lower(), "")
-        st.markdown(f"<div class='team-block'><img src='{logo1}' width='56'/>"
-                    f"<div><div class='team-name'>{t1}</div>"
-                    f"<div class='small-muted'>ML: {ml_t1} | Spread: {sp_t1} | Pred Spread: {pred_spread_t1:+.1f} | Cover Prob: {cover_prob_t1:.1%}</div></div></div>",
-                    unsafe_allow_html=True)
-        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p1*100:.1f}%;background:{'#16a34a' if edge_t1 and edge_t1>0.05 else '#ef4444' if edge_t1 and edge_t1<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted'>{p1:.1%} win probability</div>", unsafe_allow_html=True)
-        st.markdown(format_edge_badge(edge_t1), unsafe_allow_html=True)
+        # Calculate edge
+        try:
+            edge_home = moneyline_to_probability(live_ml_2) - exp2 if live_ml_2 != "N/A" else None
+            edge_away = moneyline_to_probability(live_ml_1) - exp1 if live_ml_1 != "N/A" else None
+        except:
+            edge_home = edge_away = None
 
-    with cols[1]:
-        logo2 = TEAM_LOGOS.get(t2.lower(), "")
-        st.markdown(f"<div class='team-block' style='justify-content:flex-end'><div>"
-                    f"<div class='team-name' style='text-align:right'>{t2}</div>"
-                    f"<div class='small-muted' style='text-align:right'>ML: {ml_t2} | Spread: {sp_t2} | Pred Spread: {pred_spread_t2:+.1f} | Cover Prob: {cover_prob_t2:.1%}</div></div>"
-                    f"<img src='{logo2}' width='56'/></div>",
-                    unsafe_allow_html=True)
-        st.markdown(f"<div class='prob-bar'><div class='prob-fill' style='width:{p2*100:.1f}%;background:{'#16a34a' if edge_t2 and edge_t2>0.05 else '#ef4444' if edge_t2 and edge_t2<-0.05 else '#3b82f6'}'></div></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='small-muted' style='text-align:right'>{p2:.1%} win probability</div>", unsafe_allow_html=True)
-        st.markdown(format_edge_badge(edge_t2), unsafe_allow_html=True)
+        render_matchup_card(
+            team_home=team2,
+            team_away=team1,
+            logos=TEAM_LOGOS,
+            odds_book=bookmaker_name,
+            prob_home=exp2,
+            prob_away=exp1,
+            predicted_spread=pred_spread,
+            predicted_ml_home=pred_ml_home,
+            predicted_ml_away=pred_ml_away,
+            live_ml_home=live_ml_2,
+            live_ml_away=live_ml_1,
+            live_spread_home=live_spread_2,
+            live_spread_away=live_spread_1,
+            edge_home=edge_home,
+            edge_away=edge_away,
+            is_value_home=edge_home>0.05 if edge_home else False,
+            is_value_away=edge_away>0.05 if edge_away else False
+        )
 
-    st.markdown(f"<small>Bookmaker: {book}</small>")
-    st.markdown("---")
+st.markdown('<div class="footer">NFL Elo Dashboard — Data & Predictions updated live</div>', unsafe_allow_html=True)
