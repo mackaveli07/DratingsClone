@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import requests
 from collections import defaultdict
-from difflib import get_close_matches
 
 ### ---------- CONFIG ----------
 API_KEY = "a17f19558b3402206053bc01787a6b1b"  # default TheOddsAPI key
@@ -55,19 +54,19 @@ TEAM_LOGOS = {
     "WAS":"https://upload.wikimedia.org/wikipedia/en/1/1e/Washington_Commanders_logo.svg"
 }
 
-# Map Excel full team names to API abbreviations
+# Mapping Excel abbreviations to API full team names
 TEAM_NAME_MAPPING = {
-    "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL", "Baltimore Ravens": "BAL",
-    "Buffalo Bills": "BUF", "Carolina Panthers": "CAR", "Chicago Bears": "CHI",
-    "Cincinnati Bengals": "CIN", "Cleveland Browns": "CLE", "Dallas Cowboys": "DAL",
-    "Denver Broncos": "DEN", "Detroit Lions": "DET", "Green Bay Packers": "GB",
-    "Houston Texans": "HOU", "Indianapolis Colts": "IND", "Jacksonville Jaguars": "JAX",
-    "Kansas City Chiefs": "KC", "Las Vegas Raiders": "LV", "Los Angeles Chargers": "LAC",
-    "Los Angeles Rams": "LA", "Miami Dolphins": "MIA", "Minnesota Vikings": "MIN",
-    "New England Patriots": "NE", "New Orleans Saints": "NO", "New York Giants": "NYG",
-    "New York Jets": "NYJ", "Philadelphia Eagles": "PHI", "Pittsburgh Steelers": "PIT",
-    "San Francisco 49ers": "SF", "Seattle Seahawks": "SEA", "Tampa Bay Buccaneers": "TB",
-    "Tennessee Titans": "TEN", "Washington Commanders": "WAS"
+    "ARI":"Arizona Cardinals", "ATL":"Atlanta Falcons", "BAL":"Baltimore Ravens",
+    "BUF":"Buffalo Bills", "CAR":"Carolina Panthers", "CHI":"Chicago Bears",
+    "CIN":"Cincinnati Bengals", "CLE":"Cleveland Browns", "DAL":"Dallas Cowboys",
+    "DEN":"Denver Broncos", "DET":"Detroit Lions", "GB":"Green Bay Packers",
+    "HOU":"Houston Texans", "IND":"Indianapolis Colts", "JAX":"Jacksonville Jaguars",
+    "KC":"Kansas City Chiefs", "LV":"Las Vegas Raiders", "LAC":"Los Angeles Chargers",
+    "LA":"Los Angeles Rams", "MIA":"Miami Dolphins", "MIN":"Minnesota Vikings",
+    "NE":"New England Patriots", "NO":"New Orleans Saints", "NYG":"New York Giants",
+    "NYJ":"New York Jets", "PHI":"Philadelphia Eagles", "PIT":"Pittsburgh Steelers",
+    "SF":"San Francisco 49ers", "SEA":"Seattle Seahawks", "TB":"Tampa Bay Buccaneers",
+    "TEN":"Tennessee Titans", "WAS":"Washington Commanders"
 }
 
 ### ---------- ELO FUNCTIONS ----------
@@ -80,6 +79,7 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
+
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
     elo_ratings[team1] += K * (actual1 - expected1)
@@ -91,7 +91,7 @@ def run_elo_pipeline(df):
     for _, games in grouped:
         for _, row in games.iterrows():
             team1, team2 = row.get("team1"), row.get("team2")
-            score1, score2 = row.get("score1",0), row.get("score2",0)
+            score1, score2 = row.get("score1", 0), row.get("score2",0)
             home_team = row.get("home_team", team2)
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
@@ -134,15 +134,6 @@ def parse_odds_data(api_data):
     return odds_index
 
 ### ---------- HELPERS ----------
-def moneyline_to_probability(ml):
-    try:
-        if ml in [None,"N/A",""]: return None
-        s = str(ml)
-        if s.startswith("+"): val=int(s.replace("+","")); return 100/(val+100)
-        if s.startswith("-"): val=int(s.replace("-","")); return val/(val+100)
-        val=int(s); return 100/(val+100) if val>0 else val/(val+100)
-    except: return None
-
 def probability_to_moneyline(prob):
     if prob is None: return "N/A"
     if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
@@ -154,19 +145,6 @@ def probability_to_spread(prob, team_is_favorite=True):
     spread=np.log(prob/(1-prob))/b
     spread=round(spread*2)/2
     return float(spread if team_is_favorite else -spread)
-
-def fuzzy_find_team_in_odds(team_name, odds_index_keys):
-    name=team_name.lower()
-    for key in odds_index_keys:
-        for tk in key:
-            if name==tk: return key
-    candidates = list(set([tk for key in odds_index_keys for tk in key]))
-    matches=get_close_matches(name, candidates, n=1, cutoff=0.6)
-    if matches:
-        best=matches[0]
-        for k in odds_index_keys:
-            if best in k: return k
-    return None
 
 ### ---------- CSS ----------
 APP_CSS = """
@@ -193,7 +171,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                         live_spread_home, live_spread_away):
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols=st.columns(2)
-    # Away
     with cols[0]:
         logo_url = logos.get(team_away.upper(), "")
         st.markdown(f"""
@@ -208,7 +185,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             </div>
         </div>
         """, unsafe_allow_html=True)
-    # Home
     with cols[1]:
         logo_url = logos.get(team_home.upper(), "")
         st.markdown(f"""
@@ -261,7 +237,7 @@ if week_games.empty:
     st.info(f"No games found for week {selected_week}.")
     st.stop()
 
-# Fetch odds if enabled
+# Fetch odds
 odds_index={}
 if use_api:
     try: odds_index=parse_odds_data(get_theoddsapi_odds(API_KEY))
@@ -279,21 +255,26 @@ for idx,row in week_games.iterrows():
     predicted_ml_away = probability_to_moneyline(prob_away)
     predicted_spread = probability_to_spread(prob_home, team_is_favorite=True)
 
-    odds_key=fuzzy_find_team_in_odds(team_home, odds_index.keys()) or fuzzy_find_team_in_odds(team_away, odds_index.keys())
-    live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name="N/A","N/A","N/A","N/A","N/A"
-    if odds_key:
-        data=odds_index.get(odds_key,{})
-        bookmaker_name=data.get("bookmaker","N/A")
-        ml=data.get("moneyline",{})
-        sp=data.get("spread",{})
+    # --- FIXED LIVE ODDS ---
+    home_api_name = TEAM_NAME_MAPPING.get(team_home, team_home)
+    away_api_name = TEAM_NAME_MAPPING.get(team_away, team_away)
 
-        # Use TEAM_NAME_MAPPING to match Excel names to API keys
-        home_api = TEAM_NAME_MAPPING.get(team_home, team_home).lower()
-        away_api = TEAM_NAME_MAPPING.get(team_away, team_away).lower()
-        live_ml_home = ml.get(home_api, "N/A")
-        live_ml_away = ml.get(away_api, "N/A")
-        live_spread_home = sp.get(home_api, "N/A")
-        live_spread_away = sp.get(away_api, "N/A")
+    odds_key = None
+    for key in odds_index.keys():
+        if home_api_name.lower() in key and away_api_name.lower() in key:
+            odds_key = key
+            break
+
+    live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
+    if odds_key:
+        data = odds_index[odds_key]
+        bookmaker_name = data.get("bookmaker","N/A")
+        ml = data.get("moneyline",{})
+        sp = data.get("spread",{})
+        live_ml_home = ml.get(home_api_name.lower(),"N/A")
+        live_ml_away = ml.get(away_api_name.lower(),"N/A")
+        live_spread_home = sp.get(home_api_name.lower(),"N/A")
+        live_spread_away = sp.get(away_api_name.lower(),"N/A")
 
     render_matchup_card(team_home, team_away, TEAM_LOGOS, bookmaker_name,
                         prob_home, prob_away, predicted_spread,
