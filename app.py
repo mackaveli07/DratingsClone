@@ -55,6 +55,21 @@ TEAM_LOGOS = {
     "WAS":"https://upload.wikimedia.org/wikipedia/en/1/1e/Washington_Commanders_logo.svg"
 }
 
+# Map Excel full team names to API abbreviations
+TEAM_NAME_MAPPING = {
+    "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL", "Baltimore Ravens": "BAL",
+    "Buffalo Bills": "BUF", "Carolina Panthers": "CAR", "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN", "Cleveland Browns": "CLE", "Dallas Cowboys": "DAL",
+    "Denver Broncos": "DEN", "Detroit Lions": "DET", "Green Bay Packers": "GB",
+    "Houston Texans": "HOU", "Indianapolis Colts": "IND", "Jacksonville Jaguars": "JAX",
+    "Kansas City Chiefs": "KC", "Las Vegas Raiders": "LV", "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LA", "Miami Dolphins": "MIA", "Minnesota Vikings": "MIN",
+    "New England Patriots": "NE", "New Orleans Saints": "NO", "New York Giants": "NYG",
+    "New York Jets": "NYJ", "Philadelphia Eagles": "PHI", "Pittsburgh Steelers": "PIT",
+    "San Francisco 49ers": "SF", "Seattle Seahawks": "SEA", "Tampa Bay Buccaneers": "TB",
+    "Tennessee Titans": "TEN", "Washington Commanders": "WAS"
+}
+
 ### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
@@ -65,7 +80,6 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
-
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
     elo_ratings[team1] += K * (actual1 - expected1)
@@ -77,8 +91,8 @@ def run_elo_pipeline(df):
     for _, games in grouped:
         for _, row in games.iterrows():
             team1, team2 = row.get("team1"), row.get("team2")
-            score1, score2 = row.get("score1", 0), row.get("score2",0)
-            home_team = row.get("team2", team2)
+            score1, score2 = row.get("score1",0), row.get("score2",0)
+            home_team = row.get("home_team", team2)
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
 
@@ -179,7 +193,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                         live_spread_home, live_spread_away):
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols=st.columns(2)
-
     # Away
     with cols[0]:
         logo_url = logos.get(team_away.upper(), "")
@@ -195,7 +208,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             </div>
         </div>
         """, unsafe_allow_html=True)
-
     # Home
     with cols[1]:
         logo_url = logos.get(team_home.upper(), "")
@@ -211,7 +223,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             <img src="{logo_url}" class="team-logo"/>
         </div>
         """, unsafe_allow_html=True)
-
     st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Predicted Spread: {predicted_spread:+.1f} | Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -240,8 +251,8 @@ if prefer_book.strip(): BOOKMAKER_PREFERENCE=prefer_book.strip()
 
 # Manual column selection
 st.sidebar.header("Schedule Columns Mapping")
-HOME_COL = st.sidebar.selectbox("Select Home Team Column", options=sched_df.columns, index= sched_df.columns.get_loc("team2") if "team2" in sched_df.columns else 0)
-AWAY_COL = st.sidebar.selectbox("Select Away Team Column", options=sched_df.columns, index= sched_df.columns.get_loc("team1") if "team1" in sched_df.columns else 1)
+HOME_COL = st.sidebar.selectbox("Select Home Team Column", options=sched_df.columns)
+AWAY_COL = st.sidebar.selectbox("Select Away Team Column", options=sched_df.columns)
 
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
@@ -275,10 +286,14 @@ for idx,row in week_games.iterrows():
         bookmaker_name=data.get("bookmaker","N/A")
         ml=data.get("moneyline",{})
         sp=data.get("spread",{})
-        live_ml_home=ml.get(team_home.lower(),"N/A")
-        live_ml_away=ml.get(team_away.lower(),"N/A")
-        live_spread_home=sp.get(team_home.lower(),"N/A")
-        live_spread_away=sp.get(team_away.lower(),"N/A")
+
+        # Use TEAM_NAME_MAPPING to match Excel names to API keys
+        home_api = TEAM_NAME_MAPPING.get(team_home, team_home).lower()
+        away_api = TEAM_NAME_MAPPING.get(team_away, team_away).lower()
+        live_ml_home = ml.get(home_api, "N/A")
+        live_ml_away = ml.get(away_api, "N/A")
+        live_spread_home = sp.get(home_api, "N/A")
+        live_spread_away = sp.get(away_api, "N/A")
 
     render_matchup_card(team_home, team_away, TEAM_LOGOS, bookmaker_name,
                         prob_home, prob_away, predicted_spread,
