@@ -6,7 +6,7 @@ from collections import defaultdict
 from difflib import get_close_matches
 
 ### ---------- CONFIG ----------
-API_KEY = "a17f19558b3402206053bc01787a6b1b"  # Replace with your TheOddsAPI key
+API_KEY = "a17f19558b3402206053bc01787a6b1b"
 SPORT_KEY = "americanfootball_nfl"
 REGION = "us"
 MARKETS = "h2h,spreads"
@@ -74,7 +74,7 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
-    grouped = df.groupby(["season","week"])
+    grouped = df.groupby(["season", "week"])
     for (_, _), games in grouped:
         for _, row in games.iterrows():
             update_ratings(elo_ratings, row.team1, row.team2, row.score1, row.score2, row.home_team)
@@ -84,13 +84,14 @@ def run_elo_pipeline(df):
 @st.cache_data(ttl=30)
 def get_theoddsapi_odds(api_key):
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
-    params = {"apiKey": api_key,"regions": REGION,"markets": MARKETS,"oddsFormat":"american","dateFormat":"iso"}
+    params = {"apiKey": api_key,"regions": REGION,"markets": MARKETS,"oddsFormat": "american","dateFormat": "iso"}
     resp = requests.get(url, params=params, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
 def pick_bookmaker(bookmakers):
-    if not bookmakers: return None
+    if not bookmakers:
+        return None
     if BOOKMAKER_PREFERENCE:
         for b in bookmakers:
             if b.get("key") == BOOKMAKER_PREFERENCE:
@@ -106,42 +107,42 @@ def parse_odds_data(api_data):
         key = frozenset([t0.lower(), t1.lower()])
         bm = pick_bookmaker(game.get("bookmakers", []))
         if not bm: continue
-        markets = bm.get("markets", [])
         ml, sp = {}, {}
-        for market in markets:
-            if market.get("key") == "h2h":
+        for market in bm.get("markets", []):
+            if market.get("key")=="h2h":
                 for outcome in market.get("outcomes", []):
-                    ml[outcome.get("name","").lower()] = outcome.get("price")
-            elif market.get("key") == "spreads":
+                    ml[outcome.get("name","").lower()]=outcome.get("price")
+            elif market.get("key")=="spreads":
                 for outcome in market.get("outcomes", []):
-                    sp[outcome.get("name","").lower()] = outcome.get("point")
-        odds_index[key] = {"moneyline": ml,"spread": sp,"bookmaker": bm.get("title",bm.get("key"))}
+                    sp[outcome.get("name","").lower()]=outcome.get("point")
+        odds_index[key]={"moneyline": ml,"spread": sp,"bookmaker": bm.get("title",bm.get("key"))}
     return odds_index
 
-### ---------- HELPERS ----------
 def moneyline_to_probability(ml):
     try:
         if ml in [None,"N/A",""]: return None
-        s = str(ml)
-        if s.startswith('+'): val=int(s.replace('+','')); return 100/(val+100)
-        if s.startswith('-'): val=int(s.replace('-','')); return val/(val+100)
+        s=str(ml)
+        if s.startswith('+'):
+            val=int(s.replace('+',''))
+            return 100.0/(val+100.0)
+        if s.startswith('-'):
+            val=int(s.replace('-',''))
+            return val/(val+100.0)
         val=int(s)
-        if val>0: return 100/(val+100)
-        else: val=abs(val); return val/(val+100)
+        return 100.0/(val+100.0) if val>0 else abs(val)/(abs(val)+100.0)
     except: return None
 
 def probability_to_moneyline(prob):
     if prob is None: return "N/A"
-    if prob >= 0.5: return f"-{round(100*prob/(1-prob))}"
+    if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
     else: return f"+{round(100*(1-prob)/prob)}"
 
 def probability_to_spread(prob, team_is_favorite=True):
-    b = 0.23
-    prob = max(min(prob, 0.999),0.001)
-    spread = np.log(prob/(1-prob))/b
-    spread = round(spread*2)/2
-    if not team_is_favorite: spread=-spread
-    return float(spread)
+    b=0.23
+    prob=max(min(prob,0.999),0.001)
+    spread=np.log(prob/(1-prob))/b
+    spread=round(spread*2)/2
+    return spread if team_is_favorite else -spread
 
 def format_edge_badge(edge):
     if edge is None: return ""
@@ -154,8 +155,10 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
     for key in odds_index_keys:
         for tk in key:
             if name==tk: return key
-    candidates=list({tk for k in odds_index_keys for tk in k})
-    matches=get_close_matches(name, candidates, n=1, cutoff=0.6)
+    candidates=set()
+    for key in odds_index_keys:
+        for tk in key: candidates.add(tk)
+    matches=get_close_matches(name,list(candidates),n=1,cutoff=0.6)
     if matches:
         best=matches[0]
         for k in odds_index_keys:
@@ -163,26 +166,22 @@ def fuzzy_find_team_in_odds(team_name, odds_index_keys):
     return None
 
 ### ---------- CSS ----------
-APP_CSS="""
-<style>
-body { background: linear-gradient(120deg,#f0f4f8,#d9e2ec); font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif; color:#1f2937;}
-h1{color:#0f172a;font-weight:800;letter-spacing:1.2px;}
-.matchup-card{background:#ffffffcc;border-radius:15px;padding:16px;margin:12px 8px;box-shadow:0 12px 24px rgb(0 0 0 / 0.1);transition: transform 0.2s ease,box-shadow 0.2s ease;}
-.team-block{display:flex;align-items:center;gap:16px;margin-bottom:6px;}
-.team-logo{width:56px;height:56px;border-radius:50%;box-shadow:0 4px 10px rgb(0 0 0 / 0.1);object-fit:contain;background:white;}
-.team-name{font-weight:700;font-size:20px;color:#1e293b;flex-grow:1;}
-.ml-badge{font-weight:700;padding:5px 10px;border-radius:8px;background:#e0e7ff;color:#3730a3;font-size:0.9rem;margin-right:8px;}
-.value-badge{background:linear-gradient(45deg,#16a34a,#22c55e);color:white;font-weight:700;padding:4px 12px;border-radius:12px;font-size:0.8rem;margin-left:10px;display:inline-flex;align-items:center;gap:6px;}
-.prob-bar{height:14px;border-radius:8px;overflow:hidden;background:#e2e8f0;margin-top:6px;}
-.prob-fill{height:14px;}
-.home-color{background:#2563eb;}
-.away-color{background:#ef4444;}
-.prob-text{font-size:0.9rem;margin-top:4px;color:#475569;font-weight:600;}
-.footer{font-size:0.85rem;text-align:center;margin-top:2rem;color:#94a3b8;}
-</style>
-"""
+APP_CSS = """<style>
+body { background: linear-gradient(120deg,#f0f4f8,#d9e2ec); font-family:Segoe UI, sans-serif; color:#1f2937;}
+.matchup-card { background:#ffffffcc; border-radius:15px; padding:16px; margin:12px 8px; box-shadow:0 12px 24px rgb(0 0 0 / 0.1);}
+.team-block { display:flex; align-items:center; gap:16px; margin-bottom:6px; }
+.team-logo { width:56px;height:56px;border-radius:50%;object-fit:contain;background:white; }
+.team-name { font-weight:700;font-size:20px;color:#1e293b; flex-grow:1; }
+.ml-badge { font-weight:700; padding:5px 10px; border-radius:8px; background:#e0e7ff; color:#3730a3; font-size:0.9rem; margin-right:8px; }
+.value-badge { background:linear-gradient(45deg,#16a34a,#22c55e); color:white; font-weight:700; padding:4px 12px; border-radius:12px; font-size:0.8rem; margin-left:10px; display:inline-flex; align-items:center; gap:6px; }
+.prob-bar { height:14px;border-radius:8px; overflow:hidden;background:#e2e8f0; margin-top:6px; }
+.prob-fill { height:14px; }
+.home-color { background:#2563eb; }
+.away-color { background:#ef4444; }
+.prob-text { font-size:0.9rem; margin-top:4px; color:#475569; font-weight:600; }
+.footer { font-size:0.85rem;text-align:center;margin-top:2rem;color:#94a3b8; }
+</style>"""
 
-### ---------- RENDER MATCHUP ----------
 def render_matchup_card(team_home, team_away, logos, odds_book,
                         prob_home, prob_away, predicted_spread,
                         predicted_ml_home, predicted_ml_away,
@@ -190,14 +189,10 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                         live_spread_home, live_spread_away,
                         edge_home=None, edge_away=None,
                         is_value_home=False, is_value_away=False):
-    value_icon_svg="""
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-    </svg>
-    """
+    value_icon_svg = """<svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-star" viewBox="0 0 24 24">
+<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>"""
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols=st.columns([1,1])
-
     # Away
     with cols[0]:
         logo_url=logos.get(team_away.upper(),"")
@@ -207,22 +202,15 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             <img src="{logo_url}" class="team-logo"/>
             <div>
                 <div class="team-name">{team_away} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_away}</span>
-                    <span class="ml-badge">Live ML: {live_ml_away}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{-predicted_spread:.1f}</strong> |
-                    Live Spread: <strong>{-float(live_spread_away) if live_spread_away!="N/A" else "N/A"}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill away-color" style="width:{prob_away*100:.1f}%;"></div>
-                </div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_away}</span>
+                <span class="ml-badge">Live ML: {live_ml_away}</span></div>
+                <div>Model Spread: <strong>{-predicted_spread:.1f}</strong> |
+                     Live Spread: <strong>{-float(live_spread_away) if live_spread_away!="N/A" else "N/A"}</strong></div>
+                <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%;"></div></div>
                 <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
             </div>
         </div>
-        """,unsafe_allow_html=True)
-
+        """, unsafe_allow_html=True)
     # Home
     with cols[1]:
         logo_url=logos.get(team_home.upper(),"")
@@ -231,46 +219,29 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
         <div class="team-block" style="justify-content:flex-end;">
             <div style="text-align:right;">
                 <div class="team-name">{team_home} {value_html}</div>
-                <div>
-                    <span class="ml-badge">Model ML: {predicted_ml_home}</span>
-                    <span class="ml-badge">Live ML: {live_ml_home}</span>
-                </div>
-                <div>
-                    Model Spread: <strong>{predicted_spread:+.1f}</strong> |
-                    Live Spread: <strong>{live_spread_home}</strong>
-                </div>
-                <div class="prob-bar">
-                    <div class="prob-fill home-color" style="width:{prob_home*100:.1f}%;"></div>
-                </div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_home}</span>
+                <span class="ml-badge">Live ML: {live_ml_home}</span></div>
+                <div>Model Spread: <strong>{predicted_spread:+.1f}</strong> |
+                     Live Spread: <strong>{live_spread_home}</strong></div>
+                <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%;"></div></div>
                 <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
             </div>
             <img src="{logo_url}" class="team-logo"/>
         </div>
-        """,unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div style="text-align:center; margin-top: 12px; font-weight:700; color:#475569;">
-        Predicted Spread: {predicted_spread:+.1f} &nbsp;&nbsp;|&nbsp;&nbsp; Bookmaker: {odds_book}
-    </div>
-    """,unsafe_allow_html=True)
-
+        """, unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Predicted Spread: {predicted_spread:+.1f} | Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
     edge_home_html=format_edge_badge(edge_home) if edge_home else ""
     edge_away_html=format_edge_badge(edge_away) if edge_away else ""
     if edge_home_html or edge_away_html:
-        st.markdown(f"""
-        <div style="text-align:center; margin-top:6px; font-weight:700; font-size:1.1rem; color:#334155;">
-            Home Edge: {edge_home_html} &nbsp;&nbsp;|&nbsp;&nbsp; Away Edge: {edge_away_html}
-        </div>
-        """,unsafe_allow_html=True)
-
-    st.markdown("</div>",unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center; margin-top:6px; font-weight:700; font-size:1.1rem; color:#334155;'>Home Edge: {edge_home_html} | Away Edge: {edge_away_html}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 st.title("🏈 NFL Elo Betting Dashboard")
 
-# Load data
+# Load Excel
 try:
     hist_df=pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df=pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
@@ -278,49 +249,58 @@ except Exception as e:
     st.error(f"Error loading Excel file: {e}")
     st.stop()
 
-ratings=run_elo_pipeline(hist_df)
+# Automatically detect home/away columns
+columns_lower = [c.lower() for c in sched_df.columns]
+home_col_candidates = [c for c in columns_lower if "home" in c]
+away_col_candidates = [c for c in columns_lower if "away" in c]
+if home_col_candidates and away_col_candidates:
+    HOME_COL=home_col_candidates[0]
+    AWAY_COL=away_col_candidates[0]
+else:
+    st.error("Cannot detect home/away columns in schedule sheet.")
+    st.stop()
 
+ratings = run_elo_pipeline(hist_df)
+
+# Sidebar
 st.sidebar.header("Controls")
-use_api=st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
-api_key_input=st.sidebar.text_input("TheOddsAPI key (override)", value="")
+use_api = st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
+api_key_input = st.sidebar.text_input("TheOddsAPI key (override)", value="")
 if api_key_input.strip(): API_KEY=api_key_input.strip()
-prefer_book=st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
+prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
 if prefer_book.strip(): BOOKMAKER_PREFERENCE=prefer_book.strip()
 
 available_weeks=sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week=st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
+week_games = sched_df[sched_df['week']==selected_week]
 
-week_games=sched_df[sched_df['week']==selected_week]
-if week_games.empty:
-    st.info(f"No games found for week {selected_week}")
-    st.stop()
-
+# Odds
 odds_index={}
 if use_api:
-    try: api_data=get_theoddsapi_odds(API_KEY); odds_index=parse_odds_data(api_data)
+    try: odds_index=parse_odds_data(get_theoddsapi_odds(API_KEY))
     except Exception as e: st.error(f"Error fetching odds: {e}")
 
-# Render matchups
+# Render matchup cards
 for idx in range(len(week_games)):
-    row=week_games.iloc[idx]
-    team_home=row['team_home']
-    team_away=row['team_away']
-    elo_home=ratings.get(team_home, BASE_ELO)
-    elo_away=ratings.get(team_away, BASE_ELO)
-    prob_home=expected_score(elo_home, elo_away)
-    prob_away=1-prob_home
-    predicted_spread=probability_to_spread(prob_home)
-    predicted_ml_home=probability_to_moneyline(prob_home)
-    predicted_ml_away=probability_to_moneyline(prob_away)
+    row = week_games.iloc[idx]
+    team_home = row[HOME_COL]
+    team_away = row[AWAY_COL]
 
-    # Live odds
-    odds_key=fuzzy_find_team_in_odds(team_home, odds_index.keys())
-    live_ml_home, live_ml_away = "N/A","N/A"
-    live_spread_home, live_spread_away = "N/A","N/A"
-    odds_book=""
-    if odds_key and odds_key in odds_index:
-        data=odds_index[odds_key]
-        odds_book=data.get("bookmaker","")
+    elo_home = ratings.get(team_home, BASE_ELO)
+    elo_away = ratings.get(team_away, BASE_ELO)
+    prob_home = expected_score(elo_home+HOME_ADVANTAGE, elo_away)
+    prob_away = 1-prob_home
+
+    predicted_ml_home = probability_to_moneyline(prob_home)
+    predicted_ml_away = probability_to_moneyline(prob_away)
+    predicted_spread = probability_to_spread(prob_home, team_is_favorite=True)
+
+    # Fetch live odds
+    odds_key=fuzzy_find_team_in_odds(team_home, odds_index.keys()) or fuzzy_find_team_in_odds(team_away, odds_index.keys())
+    live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
+    if odds_key:
+        data=odds_index.get(odds_key,{})
+        bookmaker_name=data.get("bookmaker","N/A")
         ml=data.get("moneyline",{})
         sp=data.get("spread",{})
         live_ml_home=ml.get(team_home.lower(),"N/A")
@@ -328,18 +308,8 @@ for idx in range(len(week_games)):
         live_spread_home=sp.get(team_home.lower(),"N/A")
         live_spread_away=sp.get(team_away.lower(),"N/A")
 
-    # Edge
-    edge_home = moneyline_to_probability(live_ml_home)-prob_home if live_ml_home!="N/A" else None
-    edge_away = moneyline_to_probability(live_ml_away)-prob_away if live_ml_away!="N/A" else None
-    is_value_home = edge_home>0.05 if edge_home else False
-    is_value_away = edge_away>0.05 if edge_away else False
-
-    render_matchup_card(team_home, team_away, TEAM_LOGOS, odds_book,
+    render_matchup_card(team_home, team_away, TEAM_LOGOS, bookmaker_name,
                         prob_home, prob_away, predicted_spread,
                         predicted_ml_home, predicted_ml_away,
                         live_ml_home, live_ml_away,
-                        live_spread_home, live_spread_away,
-                        edge_home, edge_away,
-                        is_value_home, is_value_away)
-
-st.markdown("<div class='footer'>NFL Elo + Odds Dashboard &copy; 2025</div>", unsafe_allow_html=True)
+                        live_spread_home, live_spread_away)
