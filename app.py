@@ -308,4 +308,4 @@ st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 
 st.title("🏈 NFL Elo Betting Dashboard")
-st.markdown("""<div style="background: linear
+
