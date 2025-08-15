@@ -21,7 +21,7 @@ HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
 TEAM_LOGOS = {
-    nfl_team_logos = {
+    
     "ARI": "https://a.espncdn.com/i/teamlogos/nfl/500/ari.png",
     "ATL": "https://a.espncdn.com/i/teamlogos/nfl/500/atl.png",
     "BAL": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png",
@@ -54,7 +54,7 @@ TEAM_LOGOS = {
     "TB": "https://a.espncdn.com/i/teamlogos/nfl/500/tb.png",
     "TEN": "https://a.espncdn.com/i/teamlogos/nfl/500/ten.png",
     "WAS": "https://a.espncdn.com/i/teamlogos/nfl/500/wsh.png"
-}
+
 
 }
 
