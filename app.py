@@ -247,10 +247,9 @@ if api_key_input.strip(): API_KEY=api_key_input.strip()
 prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
 if prefer_book.strip(): BOOKMAKER_PREFERENCE=prefer_book.strip()
 
-# Schedule columns
-st.sidebar.header("Schedule Columns Mapping")
-HOME_COL = st.sidebar.selectbox("Select Home Team Column", options=sched_df.columns)
-AWAY_COL = st.sidebar.selectbox("Select Away Team Column", options=sched_df.columns)
+# Fixed schedule mapping
+HOME_COL = "team2"   # home team
+AWAY_COL = "team1"   # away team
 
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
