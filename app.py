@@ -133,7 +133,7 @@ def run_elo_pipeline(df):
     return dict(elo_ratings)
 
 ### ---------- ODDS API ----------
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=3600)
 def get_theoddsapi_odds(api_key):
     url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
     params = {"apiKey": api_key,"regions": REGION,"markets": MARKETS,"oddsFormat":"american","dateFormat":"iso"}
