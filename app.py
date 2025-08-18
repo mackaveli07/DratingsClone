@@ -174,12 +174,12 @@ def probability_to_moneyline(prob):
     if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
     else: return f"+{round(100*(1-prob)/prob)}"
 
-def probability_to_spread(prob, team_is_favorite=True):
+def probability_to_spread(prob):
     b=0.23
     prob = max(min(prob,0.999),0.001)
     spread=np.log(prob/(1-prob))/b
     spread=round(spread*2)/2
-    return float(spread if team_is_favorite else -spread)
+    return float(spread)
 
 ### ---------- CSS ----------
 APP_CSS = """
@@ -200,7 +200,8 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 """
 
 def render_matchup_card(team_home, team_away, logos, odds_book,
-                        prob_home, prob_away, predicted_spread,
+                        prob_home, prob_away,
+                        spread_home, spread_away,
                         predicted_ml_home, predicted_ml_away,
                         live_ml_home, live_ml_away,
                         live_spread_home, live_spread_away):
@@ -215,7 +216,7 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             <div>
                 <div class="team-name">{team_away}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
-                <div>Model Spread: <strong>{-predicted_spread:.1f}</strong> | Live Spread: <strong>{-float(live_spread_away) if live_spread_away!="N/A" else "N/A"}</strong></div>
+                <div>Model Spread: <strong>{spread_away:+.1f}</strong> | Live Spread: <strong>{live_spread_away}</strong></div>
                 <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
             </div>
@@ -229,14 +230,14 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             <div style="text-align:right;">
                 <div class="team-name">{team_home}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
-                <div>Model Spread: <strong>{predicted_spread:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
+                <div>Model Spread: <strong>{spread_home:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
                 <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
             </div>
             <img src="{logo_url}" class="team-logo"/>
         </div>
         """, unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Predicted Spread: {predicted_spread:+.1f} | Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
 ### ---------- MAIN ----------
@@ -293,7 +294,15 @@ for idx,row in week_games.iterrows():
     prob_away = 1-prob_home
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
-    predicted_spread = probability_to_spread(prob_home, team_is_favorite=True)
+
+    # Determine spreads with favorite always getting negative
+    spread_value = probability_to_spread(max(prob_home, prob_away))
+    if prob_home > prob_away:
+        spread_home = -abs(spread_value)
+        spread_away = +abs(spread_value)
+    else:
+        spread_home = +abs(spread_value)
+        spread_away = -abs(spread_value)
 
     odds_key = frozenset([team_home, team_away])
     live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
@@ -308,7 +317,8 @@ for idx,row in week_games.iterrows():
         live_spread_away=sp.get(team_away,"N/A")
 
     render_matchup_card(team_home, team_away, TEAM_LOGOS, bookmaker_name,
-                        prob_home, prob_away, predicted_spread,
+                        prob_home, prob_away,
+                        spread_home, spread_away,
                         predicted_ml_home, predicted_ml_away,
                         live_ml_home, live_ml_away,
                         live_spread_home, live_spread_away)
