@@ -93,13 +93,18 @@ TEAM_LOGOS = {v: f"https://upload.wikimedia.org/wikipedia/en/{abbr}" for abbr,v 
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
-    """Convert abbreviation or full name to the standard full name."""
+    """Convert abbreviation or full name to the standard full name (case-insensitive)."""
+    if not name:
+        return "Unknown"
     name = str(name).strip()
-    if name in NFL_FULL_NAMES:  # abbreviation
-        return NFL_FULL_NAMES[name]
-    if name in NFL_FULL_NAMES.values():  # already full
-        return name
-    return name  # fallback (unknown team stays as-is)
+    key = name.upper()
+    if key in NFL_FULL_NAMES:  # abbreviation
+        return NFL_FULL_NAMES[key]
+    # case-insensitive full name match
+    for full in NFL_FULL_NAMES.values():
+        if name.lower() == full.lower():
+            return full
+    return name  # fallback if unrecognized
 
 ### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
@@ -121,11 +126,9 @@ def run_elo_pipeline(df):
     grouped = df.groupby(["season","week"]) if "season" in df.columns else [(None, df)]
     for _, games in grouped:
         for _, row in games.iterrows():
-            team1, team2 = row.get("team1"), row.get("team2")
+            team1, team2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
             score1, score2 = row.get("score1",0), row.get("score2",0)
-            home_team = row.get("home_team", team2)
-            # map team names
-            team1, team2, home_team = map_team_name(team1), map_team_name(team2), map_team_name(home_team)
+            home_team = map_team_name(row.get("home_team", team2))
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
 
@@ -179,10 +182,62 @@ def probability_to_spread(prob, team_is_favorite=True):
     return float(spread if team_is_favorite else -spread)
 
 ### ---------- CSS ----------
-APP_CSS = """ ... (unchanged) ... """
+APP_CSS = """
+<style>
+body { background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }
+h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
+.matchup-card { background: #ffffffcc; border-radius: 15px; padding: 16px; margin: 12px 8px; box-shadow: 0 12px 24px rgb(0 0 0 / 0.1); }
+.team-block { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; }
+.team-logo { width: 56px; height: 56px; border-radius: 50%; object-fit: contain; background: white; }
+.team-name { font-weight: 700; font-size: 20px; color: #1e293b; flex-grow: 1; }
+.ml-badge { font-weight: 700; padding: 5px 10px; border-radius: 8px; background: #e0e7ff; color: #3730a3; font-size: 0.9rem; margin-right: 8px; }
+.prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
+.prob-fill { height: 14px; }
+.home-color { background: #2563eb; }
+.away-color { background: #ef4444; }
+.prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
+</style>
+"""
 
-def render_matchup_card(...):  # unchanged
-    ...
+def render_matchup_card(team_home, team_away, logos, odds_book,
+                        prob_home, prob_away, predicted_spread,
+                        predicted_ml_home, predicted_ml_away,
+                        live_ml_home, live_ml_away,
+                        live_spread_home, live_spread_away):
+    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
+    cols=st.columns(2)
+    # Away
+    with cols[0]:
+        logo_url = logos.get(team_away, "")
+        st.markdown(f"""
+        <div class="team-block">
+            <img src="{logo_url}" class="team-logo"/>
+            <div>
+                <div class="team-name">{team_away}</div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
+                <div>Model Spread: <strong>{-predicted_spread:.1f}</strong> | Live Spread: <strong>{-float(live_spread_away) if live_spread_away!="N/A" else "N/A"}</strong></div>
+                <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
+                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    # Home
+    with cols[1]:
+        logo_url = logos.get(team_home, "")
+        st.markdown(f"""
+        <div class="team-block" style="justify-content:flex-end;">
+            <div style="text-align:right;">
+                <div class="team-name">{team_home}</div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
+                <div>Model Spread: <strong>{predicted_spread:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
+                <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
+                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
+            </div>
+            <img src="{logo_url}" class="team-logo"/>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Predicted Spread: {predicted_spread:+.1f} | Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
