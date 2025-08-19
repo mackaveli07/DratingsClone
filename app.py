@@ -219,13 +219,6 @@ def probability_to_moneyline(prob):
     if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
     else: return f"+{round(100*(1-prob)/prob)}"
 
-def probability_to_spread(prob):
-    b=0.23
-    prob = max(min(prob,0.999),0.001)
-    spread=np.log(prob/(1-prob))/b
-    spread=round(spread*2)/2
-    return float(spread)
-
 ### ---------- CSS + UI ----------
 APP_CSS = """
 <style>
@@ -243,47 +236,6 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 .prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
 </style>
 """
-
-# The rest of your UI and main code stays unchanged
-
-def render_matchup_card(team_home, team_away, logos, odds_book,
-                        prob_home, prob_away,
-                        spread_home, spread_away,
-                        predicted_ml_home, predicted_ml_away,
-                        live_ml_home, live_ml_away,
-                        live_spread_home, live_spread_away):
-    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
-    cols=st.columns(2)
-    with cols[0]:
-        logo_url = logos.get(team_away, "")
-        st.markdown(f"""
-        <div class="team-block">
-            <img src="{logo_url}" class="team-logo"/>
-            <div>
-                <div class="team-name">{team_away}</div>
-                <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
-                <div>Model Spread: <strong>{spread_away:+.1f}</strong> | Live Spread: <strong>{live_spread_away}</strong></div>
-                <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
-                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    with cols[1]:
-        logo_url = logos.get(team_home, "")
-        st.markdown(f"""
-        <div class="team-block" style="justify-content:flex-end;">
-            <div style="text-align:right;">
-                <div class="team-name">{team_home}</div>
-                <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
-                <div>Model Spread: <strong>{spread_home:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
-                <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
-                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
-            </div>
-            <img src="{logo_url}" class="team-logo"/>
-        </div>
-        """, unsafe_allow_html=True)
-    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Bookmaker: {odds_book}</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
@@ -326,13 +278,10 @@ for idx,row in week_games.iterrows():
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
 
-    spread_value = probability_to_spread(max(prob_home, prob_away))
-    if prob_home > prob_away:
-        spread_home = -abs(spread_value)
-        spread_away = +abs(spread_value)
-    else:
-        spread_home = +abs(spread_value)
-        spread_away = -abs(spread_value)
+    # Improved spread: Elo difference to point spread (25 Elo ~ 1 point)
+    elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
+    spread_home = round(-(elo_diff / 25),1)
+    spread_away = -spread_home
 
     odds_key = frozenset([team_home, team_away])
     live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
@@ -346,11 +295,35 @@ for idx,row in week_games.iterrows():
         live_spread_home=sp.get(team_home,"N/A")
         live_spread_away=sp.get(team_away,"N/A")
 
-    render_matchup_card(team_home, team_away, TEAM_LOGOS, bookmaker_name,
-                        prob_home, prob_away,
-                        spread_home, spread_away,
-                        predicted_ml_home, predicted_ml_away,
-                        live_ml_home, live_ml_away,
-                        live_spread_home, live_spread_away)
-
-st.markdown('<div class="footer">NFL Elo Dashboard — Data & Predictions updated live from TeamRankings</div>', unsafe_allow_html=True)
+    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
+    cols=st.columns(2)
+    with cols[0]:
+        logo_url = TEAM_LOGOS.get(team_away, "")
+        st.markdown(f"""
+        <div class="team-block">
+            <img src="{logo_url}" class="team-logo"/>
+            <div>
+                <div class="team-name">{team_away}</div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
+                <div>Model Spread: <strong>{spread_away:+.1f}</strong> | Live Spread: <strong>{live_spread_away}</strong></div>
+                <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
+                <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    with cols[1]:
+        logo_url = TEAM_LOGOS.get(team_home, "")
+        st.markdown(f"""
+        <div class="team-block" style="justify-content:flex-end;">
+            <div style="text-align:right;">
+                <div class="team-name">{team_home}</div>
+                <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
+                <div>Model Spread: <strong>{spread_home:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
+                <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
+                <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
+            </div>
+            <img src="{logo_url}" class="team-logo"/>
+        </div>
+        """, unsafe_allow_html=True)
+    st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Bookmaker: {bookmaker_name}</div>", unsafe_allow_html=True)
+   
