@@ -135,36 +135,23 @@ def get_teamrankings_odds():
         )
     }
     resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
-
-    table = soup.select_one("table.tr-table")
+    table = soup.find("table", {"class": "tr-table"})
     if not table:
         return {}
 
-    rows = table.select("tbody tr")
-    if not rows:
-        return {}
-
     odds_index = {}
-    for tr in rows:
-        cols = [td.get_text(strip=True) for td in tr.find_all("td")]
-        if len(cols) < 6:
+    for tr in table.find("tbody").find_all("tr"):
+        cols = [td.text.strip() for td in tr.find_all("td")]
+        if not cols or len(cols) < 6:
             continue
         team_away, team_home = cols[0], cols[1]
         spread_away, spread_home = cols[2], cols[3]
         ml_away, ml_home = cols[4], cols[5]
-
         key = frozenset([map_team_name(team_home), map_team_name(team_away)])
         odds_index[key] = {
-            "moneyline": {
-                map_team_name(team_home): ml_home,
-                map_team_name(team_away): ml_away
-            },
-            "spread": {
-                map_team_name(team_home): spread_home,
-                map_team_name(team_away): spread_away
-            },
+            "moneyline": {map_team_name(team_home): ml_home, map_team_name(team_away): ml_away},
+            "spread": {map_team_name(team_home): spread_home, map_team_name(team_away): spread_away},
             "bookmaker": "TeamRankings"
         }
     return odds_index
