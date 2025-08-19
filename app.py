@@ -2,15 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+from bs4 import BeautifulSoup
 from collections import defaultdict
 
 ### ---------- CONFIG ----------
-API_KEY = "a17f19558b3402206053bc01787a6b1b"  # TheOddsAPI key
-SPORT_KEY = "americanfootball_nfl"
-REGION = "us"
-MARKETS = "h2h,spreads"
-BOOKMAKER_PREFERENCE = None
-
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
@@ -19,7 +14,6 @@ EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
-# Full names as used by TheOddsAPI
 NFL_FULL_NAMES = {
     "ARI": "Arizona Cardinals",
     "ATL": "Atlanta Falcons",
@@ -55,7 +49,6 @@ NFL_FULL_NAMES = {
     "WAS": "Washington Commanders"
 }
 
-# Logos mapped by full name
 TEAM_LOGOS = {v: f"https://upload.wikimedia.org/wikipedia/en/{abbr}" for abbr,v in zip(NFL_FULL_NAMES.keys(), [
     "9/9e/Arizona_Cardinals_logo.svg",
     "c/c3/Atlanta_Falcons_logo.svg",
@@ -93,18 +86,16 @@ TEAM_LOGOS = {v: f"https://upload.wikimedia.org/wikipedia/en/{abbr}" for abbr,v 
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
-    """Convert abbreviation or full name to the standard full name (case-insensitive)."""
     if not name:
         return "Unknown"
     name = str(name).strip()
     key = name.upper()
-    if key in NFL_FULL_NAMES:  # abbreviation
+    if key in NFL_FULL_NAMES:
         return NFL_FULL_NAMES[key]
-    # case-insensitive full name match
     for full in NFL_FULL_NAMES.values():
         if name.lower() == full.lower():
             return full
-    return name  # fallback if unrecognized
+    return name
 
 ### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
@@ -132,43 +123,40 @@ def run_elo_pipeline(df):
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
 
-### ---------- ODDS API ----------
+### ---------- TEAMRANKINGS SCRAPER ----------
 @st.cache_data(ttl=3600)
-def get_theoddsapi_odds(api_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{SPORT_KEY}/odds"
-    params = {"apiKey": api_key,"regions": REGION,"markets": MARKETS,"oddsFormat":"american","dateFormat":"iso"}
-    resp = requests.get(url, params=params, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
+def get_teamrankings_odds():
+    url = "https://www.teamrankings.com/nfl/odds/"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.183"
+        )
+    }
+    resp = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    table = soup.find("table", {"class": "tr-table"})
+    if not table:
+        return {}
 
-def pick_bookmaker(bookmakers):
-    if not bookmakers: return None
-    if BOOKMAKER_PREFERENCE:
-        for b in bookmakers:
-            if b.get("key") == BOOKMAKER_PREFERENCE:
-                return b
-    return bookmakers[0]
-
-def parse_odds_data(api_data):
     odds_index = {}
-    for game in api_data:
-        teams = game.get("teams", [])
-        if len(teams) != 2: continue
-        t0, t1 = teams
-        key = frozenset([t0, t1])
-        bm = pick_bookmaker(game.get("bookmakers",[]))
-        if not bm: continue
-        ml, sp = {}, {}
-        for m in bm.get("markets", []):
-            if m.get("key")=="h2h":
-                for o in m.get("outcomes", []):
-                    ml[o.get("name","")] = o.get("price")
-            elif m.get("key")=="spreads":
-                for o in m.get("outcomes", []):
-                    sp[o.get("name","")] = o.get("point")
-        odds_index[key] = {"moneyline":ml, "spread":sp, "bookmaker":bm.get("title",bm.get("key"))}
+    for tr in table.find("tbody").find_all("tr"):
+        cols = [td.text.strip() for td in tr.find_all("td")]
+        if not cols or len(cols) < 6:
+            continue
+        team_away, team_home = cols[0], cols[1]
+        spread_away, spread_home = cols[2], cols[3]
+        ml_away, ml_home = cols[4], cols[5]
+        key = frozenset([map_team_name(team_home), map_team_name(team_away)])
+        odds_index[key] = {
+            "moneyline": {map_team_name(team_home): ml_home, map_team_name(team_away): ml_away},
+            "spread": {map_team_name(team_home): spread_home, map_team_name(team_away): spread_away},
+            "bookmaker": "TeamRankings"
+        }
     return odds_index
 
+### ---------- PROBABILITY HELPERS ----------
 def probability_to_moneyline(prob):
     if prob is None: return "N/A"
     if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
@@ -181,7 +169,7 @@ def probability_to_spread(prob):
     spread=round(spread*2)/2
     return float(spread)
 
-### ---------- CSS ----------
+### ---------- CSS + UI ----------
 APP_CSS = """
 <style>
 body { background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }
@@ -207,7 +195,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
                         live_spread_home, live_spread_away):
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols=st.columns(2)
-    # Away
     with cols[0]:
         logo_url = logos.get(team_away, "")
         st.markdown(f"""
@@ -222,7 +209,6 @@ def render_matchup_card(team_home, team_away, logos, odds_book,
             </div>
         </div>
         """, unsafe_allow_html=True)
-    # Home
     with cols[1]:
         logo_url = logos.get(team_home, "")
         st.markdown(f"""
@@ -245,7 +231,6 @@ st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 st.title("🏈 NFL Elo Betting Dashboard")
 
-# Load data
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
     sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
@@ -255,17 +240,8 @@ except Exception as e:
 
 ratings = run_elo_pipeline(hist_df)
 
-# Sidebar controls
-st.sidebar.header("Controls")
-use_api = st.sidebar.checkbox("Fetch live odds from TheOddsAPI", value=True)
-api_key_input = st.sidebar.text_input("TheOddsAPI key (override)", value="")
-if api_key_input.strip(): API_KEY=api_key_input.strip()
-prefer_book = st.sidebar.text_input("Preferred bookmaker key (optional)", value="")
-if prefer_book.strip(): BOOKMAKER_PREFERENCE=prefer_book.strip()
-
-# Fixed schedule mapping
-HOME_COL = "team2"   # home team
-AWAY_COL = "team1"   # away team
+HOME_COL = "team2"
+AWAY_COL = "team1"
 
 available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
 selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
@@ -274,16 +250,12 @@ if week_games.empty:
     st.info(f"No games found for week {selected_week}.")
     st.stop()
 
-# Fetch odds if enabled
-odds_index={}
-if use_api:
-    try:
-        api_data = get_theoddsapi_odds(API_KEY)
-        odds_index = parse_odds_data(api_data)
-    except Exception as e:
-        st.error(f"Error fetching odds: {e}")
+odds_index = {}
+try:
+    odds_index = get_teamrankings_odds()
+except Exception as e:
+    st.error(f"Error fetching odds: {e}")
 
-# Render matchups
 for idx,row in week_games.iterrows():
     team_home = map_team_name(row[HOME_COL])
     team_away = map_team_name(row[AWAY_COL])
@@ -295,7 +267,6 @@ for idx,row in week_games.iterrows():
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
 
-    # Determine spreads with favorite always getting negative
     spread_value = probability_to_spread(max(prob_home, prob_away))
     if prob_home > prob_away:
         spread_home = -abs(spread_value)
@@ -323,4 +294,4 @@ for idx,row in week_games.iterrows():
                         live_ml_home, live_ml_away,
                         live_spread_home, live_spread_away)
 
-st.markdown('<div class="footer">NFL Elo Dashboard — Data & Predictions updated live</div>', unsafe_allow_html=True)
+st.markdown('<div class="footer">NFL Elo Dashboard — Data & Predictions updated live from TeamRankings</div>', unsafe_allow_html=True)
