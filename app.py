@@ -103,25 +103,56 @@ def expected_score(r1, r2):
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
+
+    # Home field adjustment
     if home_team == team1:
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
+
+    # Expected score
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
-    elo_ratings[team1] += K * (actual1 - expected1)
-    elo_ratings[team2] += K * ((1 - actual1) - expected_score(r2, r1))
+
+    # Margin of victory multiplier
+    margin = abs(score1 - score2)
+    if margin == 0:  # tie safety
+        margin = 1
+    mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
+
+    # Update ratings
+    elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
+    elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
+
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
-    grouped = df.groupby(["season","week"]) if "season" in df.columns else [(None, df)]
-    for _, games in grouped:
-        for _, row in games.iterrows():
+
+    if "season" in df.columns and "week" in df.columns:
+        df = df.sort_values(["season", "week"])
+        seasons = df["season"].dropna().unique().tolist()
+
+        for i, s in enumerate(seasons):
+            # Apply preseason regression at start of new season (except first)
+            if i > 0:
+                regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO)
+
+            games = df[df["season"] == s]
+            for _, row in games.iterrows():
+                team1, team2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
+                score1, score2 = row.get("score1", 0), row.get("score2", 0)
+                home_team = map_team_name(row.get("home_team", team2))
+                update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
+    else:
+        # fallback if no season column
+        for _, row in df.iterrows():
             team1, team2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
-            score1, score2 = row.get("score1",0), row.get("score2",0)
+            score1, score2 = row.get("score1", 0), row.get("score2", 0)
             home_team = map_team_name(row.get("home_team", team2))
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
+
     return dict(elo_ratings)
+
 
 ### ---------- TEAMRANKINGS SCRAPER ----------
 @st.cache_data(ttl=3600)
