@@ -101,6 +101,11 @@ def map_team_name(name):
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
+def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
+    """Regress team ratings back toward average at season start."""
+    for t in elo_ratings:
+        elo_ratings[t] = base + reg * (elo_ratings[t] - base)
+
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
 
@@ -110,20 +115,18 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
 
-    # Expected score
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
 
     # Margin of victory multiplier
     margin = abs(score1 - score2)
-    if margin == 0:  # tie safety
+    if margin == 0:
         margin = 1
     mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
 
-    # Update ratings
+    # Update ratings with MOV scaling
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
-
 
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
@@ -133,26 +136,23 @@ def run_elo_pipeline(df):
         seasons = df["season"].dropna().unique().tolist()
 
         for i, s in enumerate(seasons):
-            # Apply preseason regression at start of new season (except first)
             if i > 0:
                 regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO)
 
             games = df[df["season"] == s]
             for _, row in games.iterrows():
                 team1, team2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
-                score1, score2 = row.get("score1", 0), row.get("score2", 0)
+                score1, score2 = row.get("score1",0), row.get("score2",0)
                 home_team = map_team_name(row.get("home_team", team2))
                 update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     else:
-        # fallback if no season column
         for _, row in df.iterrows():
             team1, team2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
-            score1, score2 = row.get("score1", 0), row.get("score2", 0)
+            score1, score2 = row.get("score1",0), row.get("score2",0)
             home_team = map_team_name(row.get("home_team", team2))
             update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
 
     return dict(elo_ratings)
-
 
 ### ---------- TEAMRANKINGS SCRAPER ----------
 @st.cache_data(ttl=3600)
@@ -207,7 +207,6 @@ def get_teamrankings_odds():
         }
 
     if not odds_index:
-        # Show first 300 chars of table for debugging
         st.text("⚠️ Debug: No odds parsed. Table snippet:")
         st.code(str(table)[:300])
 
@@ -244,6 +243,8 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 .prob-text { font-size: 0.9rem; margin-top: 4px; color: #475569; font-weight: 600; }
 </style>
 """
+
+# The rest of your UI and main code stays unchanged
 
 def render_matchup_card(team_home, team_away, logos, odds_book,
                         prob_home, prob_away,
