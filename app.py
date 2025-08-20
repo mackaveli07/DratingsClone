@@ -164,7 +164,8 @@ def get_espn_odds():
             continue
         comp = comps[0]
 
-        odds_list = comp.get("odds", [])
+        # ESPN sometimes uses "pickcenter" instead of "odds"
+        odds_list = comp.get("odds", []) or comp.get("pickcenter", [])
         if not odds_list:
             continue
         odds = odds_list[0]
@@ -176,12 +177,13 @@ def get_espn_odds():
         team_home = map_team_name([t["team"]["displayName"] for t in teams if t.get("homeAway")=="home"][0])
         team_away = map_team_name([t["team"]["displayName"] for t in teams if t.get("homeAway")=="away"][0])
 
-        ml_home = odds.get("homeMoneyLine", "N/A")
-        ml_away = odds.get("awayMoneyLine", "N/A")
-        spread_home = odds.get("spread", "N/A")
+        # ESPN odds keys can differ: check for moneyline/spread keys
+        ml_home = odds.get("homeMoneyLine") or odds.get("homeTeamOdds", {}).get("moneyLine") or "N/A"
+        ml_away = odds.get("awayMoneyLine") or odds.get("awayTeamOdds", {}).get("moneyLine") or "N/A"
+        spread_home = odds.get("spread") or odds.get("homeTeamOdds", {}).get("spread") or "N/A"
         spread_away = -float(spread_home) if spread_home not in ("N/A", None) else "N/A"
 
-        bookmaker = odds.get("provider", {}).get("name", "ESPN")
+        bookmaker = odds.get("provider", {}).get("name") or odds.get("provider", {}).get("id") or "ESPN"
 
         key = frozenset([team_home, team_away])
         odds_index[key] = {
@@ -191,6 +193,7 @@ def get_espn_odds():
         }
 
     return odds_index
+
 
 ### ---------- PROBABILITY HELPERS ----------
 def probability_to_moneyline(prob):
