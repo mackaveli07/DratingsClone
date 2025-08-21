@@ -231,6 +231,7 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 """
 
 ### ---------- MAIN ----------
+### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 st.title("🏈 NFL Elo Betting Dashboard")
@@ -241,6 +242,13 @@ try:
 except Exception as e:
     st.error(f"Error loading Excel file or sheets: {e}")
     st.stop()
+
+# --- Compute league average total points from historical data ---  # NEW
+if {"score1","score2"} <= set(hist_df.columns):
+    NFL_AVG_TOTAL = (hist_df["score1"] + hist_df["score2"]).mean()
+else:
+    NFL_AVG_TOTAL = 44  # fallback
+st.caption(f"📊 Using historical average total points: {NFL_AVG_TOTAL:.2f}")  # optional display
 
 ratings = run_elo_pipeline(hist_df)
 
@@ -256,9 +264,9 @@ if week_games.empty:
 
 odds_index = {}
 try:
-    odds_index = get_espn_odds()
+    odds_index = get_teamrankings_odds()
 except Exception as e:
-    st.error(f"Error fetching ESPN odds: {e}")
+    st.error(f"Error fetching odds: {e}")
 
 for idx,row in week_games.iterrows():
     team_home = map_team_name(row[HOME_COL])
@@ -271,9 +279,14 @@ for idx,row in week_games.iterrows():
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
 
+    # Improved spread: Elo difference to point spread (25 Elo ~ 1 point)
     elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
     spread_home = round(-(elo_diff / 25),1)
     spread_away = -spread_home
+
+    # --- Score Projection using league average total ---  # NEW
+    predicted_home_score = round((NFL_AVG_TOTAL / 2) + (spread_home / 2), 1)
+    predicted_away_score = round((NFL_AVG_TOTAL / 2) - (spread_home / 2), 1)
 
     odds_key = frozenset([team_home, team_away])
     live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
@@ -287,19 +300,10 @@ for idx,row in week_games.iterrows():
         live_spread_home=sp.get(team_home,"N/A")
         live_spread_away=sp.get(team_away,"N/A")
 
-    # Value bet detection
-    prob_mkt_home = moneyline_to_prob(live_ml_home)
-    prob_mkt_away = moneyline_to_prob(live_ml_away)
-    edge_home = prob_home - (prob_mkt_home if prob_mkt_home else 0)
-    edge_away = prob_away - (prob_mkt_away if prob_mkt_away else 0)
-    value_home = edge_home > 0.05
-    value_away = edge_away > 0.05
-
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols=st.columns(2)
     with cols[0]:
         logo_url = TEAM_LOGOS.get(team_away, "")
-        value_badge = "<div class='value-bet'>✅ Value Bet</div>" if value_away else ""
         st.markdown(f"""
         <div class="team-block">
             <img src="{logo_url}" class="team-logo"/>
@@ -307,27 +311,25 @@ for idx,row in week_games.iterrows():
                 <div class="team-name">{team_away}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
                 <div>Model Spread: <strong>{spread_away:+.1f}</strong> | Live Spread: <strong>{live_spread_away}</strong></div>
+                <div>Predicted Score: <strong>{predicted_away_score}</strong></div>  <!-- NEW -->
                 <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
-                {value_badge}
             </div>
         </div>
         """, unsafe_allow_html=True)
     with cols[1]:
         logo_url = TEAM_LOGOS.get(team_home, "")
-        value_badge = "<div class='value-bet'>✅ Value Bet</div>" if value_home else ""
         st.markdown(f"""
         <div class="team-block" style="justify-content:flex-end;">
             <div style="text-align:right;">
                 <div class="team-name">{team_home}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
                 <div>Model Spread: <strong>{spread_home:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
+                <div>Predicted Score: <strong>{predicted_home_score}</strong></div>  <!-- NEW -->
                 <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
-                {value_badge}
             </div>
             <img src="{logo_url}" class="team-logo"/>
         </div>
         """, unsafe_allow_html=True)
     st.markdown(f"<div style='text-align:center; margin-top:12px; font-weight:700; color:#475569;'>Bookmaker: {bookmaker_name}</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
