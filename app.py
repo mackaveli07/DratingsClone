@@ -12,6 +12,7 @@ HOME_ADVANTAGE = 65
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
+PICKS_SHEET = "Picks"
 
 NFL_FULL_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
@@ -130,7 +131,7 @@ HOME_COL = "team2"
 AWAY_COL = "team1"
 
 # ---------- Tabs ----------
-tabs = st.tabs(["Matchups", "Power Rankings"])
+tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners"])
 
 ### ---- Matchups Tab ----
 with tabs[0]:
@@ -199,32 +200,4 @@ with tabs[0]:
                     <div style="flex:1; text-align:center; color:#ef4444;">
                         <b>{prob_away*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
                     </div>
-                    <div style="flex:1; text-align:center; color:#2563eb;">
-                        <b>{prob_home*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-### ---- Power Rankings Tab ----
-with tabs[1]:
-    st.subheader("📊 Elo Power Rankings")
-
-    ranking_df = pd.DataFrame([
-        {"Team": team, "Elo": rating, "Abbr": get_abbr(team)}
-        for team, rating in ratings.items()
-    ])
-    ranking_df = ranking_df.sort_values("Elo", ascending=False).reset_index(drop=True)
-    ranking_df.index += 1  # start rank at 1
-
-    for i, row in ranking_df.iterrows():
-        col1, col2, col3 = st.columns([0.5, 2, 1])
-        with col1:
-            safe_logo(row["Abbr"], width=40)
-        with col2:
-            st.markdown(f"**#{i} {row['Team']}**")
-        with col3:
-            st.markdown(f"Elo: **{row['Elo']:.1f}**")
+                    <div style="flex:1; text-align:center; color:#2563eb
