@@ -200,4 +200,93 @@ with tabs[0]:
                     <div style="flex:1; text-align:center; color:#ef4444;">
                         <b>{prob_away*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
                     </div>
-                    <div style="flex:1; text-align:center; color:#2563eb
+                    <div style="flex:1; text-align:center; color:#2563eb;">
+                        <b>{prob_home*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+### ---- Power Rankings Tab ----
+with tabs[1]:
+    st.subheader("📊 Elo Power Rankings")
+
+    ranking_df = pd.DataFrame([
+        {"Team": team, "Elo": rating, "Abbr": get_abbr(team)}
+        for team, rating in ratings.items()
+    ])
+    ranking_df = ranking_df.sort_values("Elo", ascending=False).reset_index(drop=True)
+    ranking_df.index += 1  # start rank at 1
+
+    for i, row in ranking_df.iterrows():
+        col1, col2, col3 = st.columns([0.5, 2, 1])
+        with col1:
+            safe_logo(row["Abbr"], width=40)
+        with col2:
+            st.markdown(f"**#{i} {row['Team']}**")
+        with col3:
+            st.markdown(f"Elo: **{row['Elo']:.1f}**")
+
+### ---- Pick Winners Tab ----
+with tabs[2]:
+    st.subheader("📝 Make Your Picks")
+
+    picks = {}
+    week_games = sched_df[sched_df['week']==selected_week].copy()
+
+    # Add Pick column if missing
+    if "Pick" not in week_games.columns:
+        week_games["Pick"] = ""
+
+    for idx, row in week_games.iterrows():
+        team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
+        home_abbr, away_abbr = get_abbr(team_home), get_abbr(team_away)
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if away_abbr: safe_logo(away_abbr, width=40)
+            if home_abbr: safe_logo(home_abbr, width=40)
+
+        with col2:
+            pick = st.radio(
+                f"{team_away} @ {team_home}",
+                [team_away, team_home],
+                horizontal=True,
+                key=f"pick_{team_home}_{team_away}"
+            )
+            week_games.at[idx, "Pick"] = pick
+            picks[f"{team_away} @ {team_home}"] = pick
+
+    st.markdown("### ✅ Your Picks")
+    for game, winner in picks.items():
+        st.write(f"{game}: **{winner}**")
+
+    # Save picks into "Picks" worksheet
+    if st.button("💾 Save Picks to Excel"):
+        try:
+            xl = pd.ExcelFile(EXCEL_FILE)
+
+            if PICKS_SHEET in xl.sheet_names:
+                picks_df = pd.read_excel(EXCEL_FILE, sheet_name=PICKS_SHEET)
+            else:
+                picks_df = pd.DataFrame()
+
+            # Drop old rows for this week
+            if "week" in picks_df.columns:
+                picks_df = picks_df[picks_df["week"] != selected_week]
+
+            # Append updated week games
+            updated_picks = pd.concat([picks_df, week_games], ignore_index=True)
+
+            # Write back (preserve other sheets)
+            with pd.ExcelWriter(EXCEL_FILE, mode="a", engine="openpyxl", if_sheet_exists="replace") as writer:
+                hist_df.to_excel(writer, sheet_name=HIST_SHEET, index=False)
+                sched_df.to_excel(writer, sheet_name=SCHEDULE_SHEET, index=False)
+                updated_picks.to_excel(writer, sheet_name=PICKS_SHEET, index=False)
+
+            st.success(f"✅ Picks for Week {selected_week} saved to Excel sheet '{PICKS_SHEET}'")
+        except Exception as e:
+            st.error(f"❌ Error saving picks: {e}")
