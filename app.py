@@ -93,15 +93,11 @@ APP_CSS = """
 <style>
 body { background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }
 h1 { color: #0f172a; font-weight: 800; }
-.matchup-card { background: #ffffffcc; border-radius: 15px; padding: 16px; margin: 12px 8px; box-shadow: 0 12px 24px rgb(0 0 0 / 0.1); }
-.team-block { display: flex; align-items: center; gap: 16px; margin-bottom: 6px; }
-.team-logo { width: 56px; height: 56px; border-radius: 50%; object-fit: contain; background: white; }
-.team-name { font-weight: 700; font-size: 20px; color: #1e293b; flex-grow: 1; }
-.info-line { font-size: 0.95rem; margin-top: 4px; color: #475569; font-weight: 600; }
-.prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
-.prob-fill { height: 14px; }
-.home-color { background: #2563eb; }
-.away-color { background: #ef4444; }
+.matchup-card { background: #ffffffcc; border-radius: 18px; padding: 18px; margin: 14px 8px; box-shadow: 0 8px 20px rgb(0 0 0 / 0.12); }
+.team-logo { width: 64px; height: 64px; border-radius: 50%; object-fit: contain; background: white; margin: 4px; }
+.team-name { font-weight: 700; font-size: 18px; margin-top: 6px; }
+.scoreline { font-size: 32px; font-weight: 800; color: #0f172a; }
+.prob-row { display:flex; justify-content:space-between; margin-top:10px; font-weight:600; }
 </style>
 """
 
@@ -158,34 +154,36 @@ for _, row in week_games.iterrows():
     home_abbr = get_abbr(team_home)
     away_abbr = get_abbr(team_away)
 
-    st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
-    cols = st.columns(2)
-    with cols[0]:
-        st.markdown(f"<div class='team-block'>", unsafe_allow_html=True)
-        if away_abbr:
-            st.image(f"Logos/{away_abbr}.png", width=56)
-        st.markdown(f"""
-            <div>
-                <div class="team-name">{team_away}</div>
-                <div class="info-line">Projected Points: {predicted_away_score}</div>
-                <div class="info-line">Win Probability: {prob_away*100:.1f}%</div>
-                <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
-            </div>
-        """, unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Decide favorite for highlight
+    favorite = team_home if prob_home > prob_away else team_away
 
-    with cols[1]:
-        st.markdown(f"<div class='team-block' style='justify-content:flex-end;'>", unsafe_allow_html=True)
-        st.markdown(f"""
-            <div style="text-align:right;">
-                <div class="team-name">{team_home}</div>
-                <div class="info-line">Projected Points: {predicted_home_score}</div>
-                <div class="info-line">Win Probability: {prob_home*100:.1f}%</div>
-                <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
-            </div>
-        """, unsafe_allow_html=True)
-        if home_abbr:
-            st.image(f"Logos/{home_abbr}.png", width=56)
-        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="matchup-card">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:20px;">
+        <!-- Away team -->
+        <div style="flex:1; text-align:left;">
+          <img src="Logos/{away_abbr}.png" class="team-logo"/>
+          <div class="team-name">{team_away}</div>
+        </div>
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        <!-- Scoreline -->
+        <div style="flex:2; text-align:center;" class="scoreline">
+          <span style="color:{'#2563eb' if team_away==favorite else '#1f2937'}">{predicted_away_score}</span>
+          –
+          <span style="color:{'#2563eb' if team_home==favorite else '#1f2937'}">{predicted_home_score}</span>
+        </div>
+
+        <!-- Home team -->
+        <div style="flex:1; text-align:right;">
+          <div class="team-name">{team_home}</div>
+          <img src="Logos/{home_abbr}.png" class="team-logo"/>
+        </div>
+      </div>
+
+      <!-- Probabilities -->
+      <div class="prob-row">
+        <div style="color:#ef4444;">{prob_away*100:.1f}% Win Prob</div>
+        <div style="color:#2563eb;">{prob_home*100:.1f}% Win Prob</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
