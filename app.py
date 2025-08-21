@@ -279,8 +279,9 @@ for idx,row in week_games.iterrows():
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
 
+    # ✅ Fixed spread logic: positive = home favored
     elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
-    spread_home = round(-(elo_diff / 25),1)
+    spread_home = round(elo_diff / 25, 1)
     spread_away = -spread_home
 
     season = row.get("season")
