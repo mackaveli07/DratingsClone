@@ -100,22 +100,8 @@ def run_elo_pipeline(df):
                 update_ratings(elo_ratings, team1, team2, score1, score2, home_team)
     return dict(elo_ratings)
 
-### ---------- CSS + UI ----------
-APP_CSS = """
-<style>
-body {{ background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }}
-h1 {{ color: #0f172a; font-weight: 800; }}
-.matchup-card {{ background: #ffffffcc; border-radius: 18px; padding: 18px; margin: 14px 8px; box-shadow: 0 8px 20px rgb(0 0 0 / 0.12); }}
-.team-logo {{ width: 64px; height: 64px; border-radius: 50%; object-fit: contain; background: white; margin: 4px; }}
-.team-name {{ font-weight: 700; font-size: 18px; margin-top: 6px; }}
-.scoreline {{ font-size: 32px; font-weight: 800; color: #0f172a; }}
-.prob-row {{ display:flex; justify-content:space-between; margin-top:10px; font-weight:600; }}
-</style>
-"""
-
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
-st.markdown(APP_CSS, unsafe_allow_html=True)
 st.title("🏈 NFL Elo Projections")
 
 try:
@@ -162,40 +148,21 @@ for _, row in week_games.iterrows():
     predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
     predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
 
-    # Map to abbreviations for logos
     home_abbr = get_abbr(team_home)
     away_abbr = get_abbr(team_away)
 
-    # Decide favorite for highlight
-    favorite = team_home if prob_home > prob_away else team_away
+    col1, col2 = st.columns([1, 1])
 
-    st.markdown(f"""
-    <div class="matchup-card">
-      <div style="display:flex; align-items:center; justify-content:space-between; gap:20px;">
-        <!-- Away team -->
-        <div style="flex:1; text-align:left;">
-          {f'<img src="Logos/{away_abbr}.png" class="team-logo"/>' if away_abbr else ''}
-          <div class="team-name">{team_away}</div>
-        </div>
+    with col1:
+        if away_abbr:
+            safe_logo(away_abbr, width=64)
+        st.markdown(f"### {team_away}")
+        st.write(f"**Projected Points:** {predicted_away_score}")
+        st.write(f"**Win Probability:** {prob_away*100:.1f}%")
 
-        <!-- Scoreline -->
-        <div style="flex:2; text-align:center;" class="scoreline">
-          <span style="color:{'#2563eb' if team_away==favorite else '#1f2937'}">{predicted_away_score}</span>
-          –
-          <span style="color:{'#2563eb' if team_home==favorite else '#1f2937'}">{predicted_home_score}</span>
-        </div>
-
-        <!-- Home team -->
-        <div style="flex:1; text-align:right;">
-          <div class="team-name">{team_home}</div>
-          {f'<img src="Logos/{home_abbr}.png" class="team-logo"/>' if home_abbr else ''}
-        </div>
-      </div>
-
-      <!-- Probabilities -->
-      <div class="prob-row">
-        <div style="color:#ef4444;">{prob_away*100:.1f}% Win Prob</div>
-        <div style="color:#2563eb;">{prob_home*100:.1f}% Win Prob</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
+    with col2:
+        if home_abbr:
+            safe_logo(home_abbr, width=64)
+        st.markdown(f"### {team_home}")
+        st.write(f"**Projected Points:** {predicted_home_score}")
+        st.write(f"**Win Probability:** {prob_home*100:.1f}%")
