@@ -151,18 +151,41 @@ for _, row in week_games.iterrows():
     home_abbr = get_abbr(team_home)
     away_abbr = get_abbr(team_away)
 
-    col1, col2 = st.columns([1, 1])
+    # ----- Matchup Card -----
+    with st.container():
+        st.markdown(
+            """
+            <div style="
+                background: #ffffff;
+                border-radius: 16px;
+                padding: 16px;
+                margin: 10px 0;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                ">
+            """,
+            unsafe_allow_html=True,
+        )
 
-    with col1:
-        if away_abbr:
-            safe_logo(away_abbr, width=64)
-        st.markdown(f"### {team_away}")
-        st.write(f"**Projected Points:** {predicted_away_score}")
-        st.write(f"**Win Probability:** {prob_away*100:.1f}%")
+        # Scoreline Header
+        st.markdown(
+            f"<h3 style='text-align:center; margin-bottom:15px;'>{team_away} {predicted_away_score} – {predicted_home_score} {team_home}</h3>",
+            unsafe_allow_html=True,
+        )
 
-    with col2:
-        if home_abbr:
-            safe_logo(home_abbr, width=64)
-        st.markdown(f"### {team_home}")
-        st.write(f"**Projected Points:** {predicted_home_score}")
-        st.write(f"**Win Probability:** {prob_home*100:.1f}%")
+        col1, col2 = st.columns([1, 1])
+
+        with col1:
+            if away_abbr:
+                safe_logo(away_abbr, width=80)
+            st.markdown(f"### {team_away}")
+            st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_away_score}</b></p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='font-size:18px; color:#ef4444;'>Win Probability: <b>{prob_away*100:.1f}%</b></p>", unsafe_allow_html=True)
+
+        with col2:
+            if home_abbr:
+                safe_logo(home_abbr, width=80)
+            st.markdown(f"### {team_home}")
+            st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_home_score}</b></p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='font-size:18px; color:#2563eb;'>Win Probability: <b>{prob_home*100:.1f}%</b></p>", unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
