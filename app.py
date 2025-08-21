@@ -91,15 +91,16 @@ def run_elo_pipeline(df):
 ### ---------- CSS + UI ----------
 APP_CSS = """
 <style>
-body { background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }
-h1 { color: #0f172a; font-weight: 800; }
-.matchup-card { background: #ffffffcc; border-radius: 18px; padding: 18px; margin: 14px 8px; box-shadow: 0 8px 20px rgb(0 0 0 / 0.12); }
-.team-logo { width: 64px; height: 64px; border-radius: 50%; object-fit: contain; background: white; margin: 4px; }
-.team-name { font-weight: 700; font-size: 18px; margin-top: 6px; }
-.scoreline { font-size: 32px; font-weight: 800; color: #0f172a; }
-.prob-row { display:flex; justify-content:space-between; margin-top:10px; font-weight:600; }
+body {{ background: linear-gradient(120deg, #f0f4f8, #d9e2ec); font-family: "Segoe UI", sans-serif; color: #1f2937; }}
+h1 {{ color: #0f172a; font-weight: 800; }}
+.matchup-card {{ background: #ffffffcc; border-radius: 18px; padding: 18px; margin: 14px 8px; box-shadow: 0 8px 20px rgb(0 0 0 / 0.12); }}
+.team-logo {{ width: 64px; height: 64px; border-radius: 50%; object-fit: contain; background: white; margin: 4px; }}
+.team-name {{ font-weight: 700; font-size: 18px; margin-top: 6px; }}
+.scoreline {{ font-size: 32px; font-weight: 800; color: #0f172a; }}
+.prob-row {{ display:flex; justify-content:space-between; margin-top:10px; font-weight:600; }}
 </style>
 """
+
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
