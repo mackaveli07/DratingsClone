@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+import os
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -45,6 +46,17 @@ def get_abbr(team_full):
         if full == team_full:
             return abbr
     return None
+
+def safe_logo(abbr, width=64):
+    """Safely load a logo or show a placeholder if missing."""
+    path = f"Logos/{abbr}.png"
+    if abbr and os.path.exists(path):
+        st.image(path, width=width)
+    else:
+        st.markdown(
+            f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; display:flex; align-items:center; justify-content:center; border-radius:50%; font-size:12px; color:#475569;'>{abbr or '?'}</div>",
+            unsafe_allow_html=True,
+        )
 
 ### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
@@ -100,7 +112,6 @@ h1 {{ color: #0f172a; font-weight: 800; }}
 .prob-row {{ display:flex; justify-content:space-between; margin-top:10px; font-weight:600; }}
 </style>
 """
-
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
@@ -163,7 +174,7 @@ for _, row in week_games.iterrows():
       <div style="display:flex; align-items:center; justify-content:space-between; gap:20px;">
         <!-- Away team -->
         <div style="flex:1; text-align:left;">
-          <img src="Logos/{away_abbr}.png" class="team-logo"/>
+          {f'<img src="Logos/{away_abbr}.png" class="team-logo"/>' if away_abbr else ''}
           <div class="team-name">{team_away}</div>
         </div>
 
@@ -177,7 +188,7 @@ for _, row in week_games.iterrows():
         <!-- Home team -->
         <div style="flex:1; text-align:right;">
           <div class="team-name">{team_home}</div>
-          <img src="Logos/{home_abbr}.png" class="team-logo"/>
+          {f'<img src="Logos/{home_abbr}.png" class="team-logo"/>' if home_abbr else ''}
         </div>
       </div>
 
