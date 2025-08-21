@@ -26,20 +26,6 @@ NFL_FULL_NAMES = {
     "TEN": "Tennessee Titans", "WAS": "Washington Commanders"
 }
 
-TEAM_LOGOS = {v: f"https://upload.wikimedia.org/wikipedia/en/{abbr}" for abbr,v in zip(NFL_FULL_NAMES.keys(), [
-    "9/9e/Arizona_Cardinals_logo.svg", "c/c3/Atlanta_Falcons_logo.svg", "1/16/Baltimore_Ravens_logo.svg",
-    "7/77/Buffalo_Bills_logo.svg", "7/7e/Carolina_Panthers_logo.svg", "6/63/Chicago_Bears_logo.svg",
-    "2/24/Cincinnati_Bengals_logo.svg", "4/4b/Cleveland_Browns_logo.svg", "2/2e/Dallas_Cowboys.svg",
-    "4/44/Denver_Broncos_logo.svg", "7/7e/Detroit_Lions_logo.svg", "5/50/Green_Bay_Packers_logo.svg",
-    "2/28/Houston_Texans.svg", "7/7e/Indianapolis_Colts_logo.svg", "8/8e/Jacksonville_Jaguars_logo.svg",
-    "7/72/Kansas_City_Chiefs_logo.svg", "9/9b/Las_Vegas_Raiders_logo.svg", "8/88/Los_Angeles_Chargers_logo.svg",
-    "7/7a/Los_Angeles_Rams_logo.svg", "f/fd/Miami_Dolphins_logo.svg", "f/fb/Minnesota_Vikings_logo.svg",
-    "b/b9/New_England_Patriots_logo.svg", "9/9f/New_Orleans_Saints_logo.svg", "6/6b/New_York_Giants_logo.svg",
-    "6/6e/New_York_Jets_logo.svg", "8/8e/Philadelphia_Eagles_logo.svg", "6/6d/Pittsburgh_Steelers_logo.svg",
-    "4/4f/San_Francisco_49ers_logo.svg", "7/7e/Seattle_Seahawks_logo.svg", "6/6c/Tampa_Bay_Buccaneers_logo.svg",
-    "9/9e/Tennessee_Titans_logo.svg", "1/1e/Washington_Commanders_logo.svg"
-])}
-
 ### ---------- HELPERS ----------
 def map_team_name(name):
     if not name:
@@ -52,6 +38,13 @@ def map_team_name(name):
         if name.lower() == full.lower():
             return full
     return name
+
+def get_abbr(team_full):
+    """Return abbreviation (BUF, KC, etc.) from full name."""
+    for abbr, full in NFL_FULL_NAMES.items():
+        if full == team_full:
+            return abbr
+    return None
 
 ### ---------- ELO FUNCTIONS ----------
 def expected_score(r1, r2):
@@ -161,32 +154,38 @@ for _, row in week_games.iterrows():
     predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
     predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
 
+    # Map to abbreviations for logos
+    home_abbr = get_abbr(team_home)
+    away_abbr = get_abbr(team_away)
+
     st.markdown(f"<div class='matchup-card'>", unsafe_allow_html=True)
     cols = st.columns(2)
     with cols[0]:
-        logo_url = TEAM_LOGOS.get(team_away, "")
+        st.markdown(f"<div class='team-block'>", unsafe_allow_html=True)
+        if away_abbr:
+            st.image(f"Logos/{away_abbr}.png", width=56)
         st.markdown(f"""
-        <div class="team-block">
-            <img src="{logo_url}" class="team-logo"/>
             <div>
                 <div class="team-name">{team_away}</div>
                 <div class="info-line">Projected Points: {predicted_away_score}</div>
                 <div class="info-line">Win Probability: {prob_away*100:.1f}%</div>
                 <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
             </div>
-        </div>
         """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with cols[1]:
-        logo_url = TEAM_LOGOS.get(team_home, "")
+        st.markdown(f"<div class='team-block' style='justify-content:flex-end;'>", unsafe_allow_html=True)
         st.markdown(f"""
-        <div class="team-block" style="justify-content:flex-end;">
             <div style="text-align:right;">
                 <div class="team-name">{team_home}</div>
                 <div class="info-line">Projected Points: {predicted_home_score}</div>
                 <div class="info-line">Win Probability: {prob_home*100:.1f}%</div>
                 <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
             </div>
-            <img src="{logo_url}" class="team-logo"/>
-        </div>
         """, unsafe_allow_html=True)
+        if home_abbr:
+            st.image(f"Logos/{home_abbr}.png", width=56)
+        st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
