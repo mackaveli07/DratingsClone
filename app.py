@@ -129,63 +129,88 @@ ratings = run_elo_pipeline(hist_df)
 HOME_COL = "team2"
 AWAY_COL = "team1"
 
-available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
-selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
-week_games = sched_df[sched_df['week']==selected_week]
+# ---------- Tabs ----------
+tabs = st.tabs(["Matchups", "Power Rankings"])
 
-for _, row in week_games.iterrows():
-    team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
-    elo_home, elo_away = ratings.get(team_home, BASE_ELO), ratings.get(team_away, BASE_ELO)
+### ---- Matchups Tab ----
+with tabs[0]:
+    available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
+    selected_week = st.selectbox("Select Week", available_weeks, index=len(available_weeks)-1)
+    week_games = sched_df[sched_df['week']==selected_week]
 
-    prob_home = expected_score(elo_home+HOME_ADVANTAGE, elo_away)
-    prob_away = 1 - prob_home
+    for _, row in week_games.iterrows():
+        team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
+        elo_home, elo_away = ratings.get(team_home, BASE_ELO), ratings.get(team_away, BASE_ELO)
 
-    elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
-    spread_home = elo_diff / 25
-    season = row.get("season")
-    avg_total = NFL_AVG_TOTALS.get(season, overall_avg)
+        prob_home = expected_score(elo_home+HOME_ADVANTAGE, elo_away)
+        prob_away = 1 - prob_home
 
-    predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
-    predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
+        elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
+        spread_home = elo_diff / 25
+        season = row.get("season")
+        avg_total = NFL_AVG_TOTALS.get(season, overall_avg)
 
-    home_abbr = get_abbr(team_home)
-    away_abbr = get_abbr(team_away)
+        predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
+        predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
 
-    # ----- Matchup Card -----
-    with st.container():
-        st.markdown(
-            """
-            <div style="
-                background: #ffffff;
-                border-radius: 16px;
-                padding: 16px;
-                margin: 10px 0;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-                ">
-            """,
-            unsafe_allow_html=True,
-        )
+        home_abbr = get_abbr(team_home)
+        away_abbr = get_abbr(team_away)
 
-        # Scoreline Header
-        st.markdown(
-            f"<h3 style='text-align:center; margin-bottom:15px;'>{team_away} {predicted_away_score} – {predicted_home_score} {team_home}</h3>",
-            unsafe_allow_html=True,
-        )
+        # ----- Matchup Card -----
+        with st.container():
+            st.markdown(
+                """
+                <div style="
+                    background: #ffffff;
+                    border-radius: 16px;
+                    padding: 16px;
+                    margin: 10px 0;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                    ">
+                """,
+                unsafe_allow_html=True,
+            )
 
-        col1, col2 = st.columns([1, 1])
+            # Scoreline Header
+            st.markdown(
+                f"<h3 style='text-align:center; margin-bottom:15px;'>{team_away} {predicted_away_score} – {predicted_home_score} {team_home}</h3>",
+                unsafe_allow_html=True,
+            )
 
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if away_abbr:
+                    safe_logo(away_abbr, width=80)
+                st.markdown(f"### {team_away}")
+                st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_away_score}</b></p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size:18px; color:#ef4444;'>Win Probability: <b>{prob_away*100:.1f}%</b></p>", unsafe_allow_html=True)
+
+            with col2:
+                if home_abbr:
+                    safe_logo(home_abbr, width=80)
+                st.markdown(f"### {team_home}")
+                st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_home_score}</b></p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size:18px; color:#2563eb;'>Win Probability: <b>{prob_home*100:.1f}%</b></p>", unsafe_allow_html=True)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+### ---- Power Rankings Tab ----
+with tabs[1]:
+    st.subheader("📊 Elo Power Rankings")
+
+    ranking_df = pd.DataFrame([
+        {"Team": team, "Elo": rating, "Abbr": get_abbr(team)}
+        for team, rating in ratings.items()
+    ])
+    ranking_df = ranking_df.sort_values("Elo", ascending=False).reset_index(drop=True)
+    ranking_df.index += 1  # start rank at 1
+
+    for i, row in ranking_df.iterrows():
+        col1, col2, col3 = st.columns([0.5, 2, 1])
         with col1:
-            if away_abbr:
-                safe_logo(away_abbr, width=80)
-            st.markdown(f"### {team_away}")
-            st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_away_score}</b></p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='font-size:18px; color:#ef4444;'>Win Probability: <b>{prob_away*100:.1f}%</b></p>", unsafe_allow_html=True)
-
+            safe_logo(row["Abbr"], width=40)
         with col2:
-            if home_abbr:
-                safe_logo(home_abbr, width=80)
-            st.markdown(f"### {team_home}")
-            st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_home_score}</b></p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='font-size:18px; color:#2563eb;'>Win Probability: <b>{prob_home*100:.1f}%</b></p>", unsafe_allow_html=True)
-
-        st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(f"**#{i} {row['Team']}**")
+        with col3:
+            st.markdown(f"Elo: **{row['Elo']:.1f}**")
