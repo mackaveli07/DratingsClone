@@ -156,42 +156,56 @@ with tabs[0]:
         home_abbr = get_abbr(team_home)
         away_abbr = get_abbr(team_away)
 
-        # ----- Matchup Card -----
+        # ----- Modern Glassmorphism Matchup Card -----
         with st.container():
             st.markdown(
                 """
                 <div style="
-                    background: #ffffff;
-                    border-radius: 16px;
-                    padding: 16px;
-                    margin: 10px 0;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                    background: rgba(255,255,255,0.15);
+                    backdrop-filter: blur(12px);
+                    border-radius: 20px;
+                    padding: 20px;
+                    margin: 16px 0;
+                    box-shadow: 0 4px 30px rgba(0,0,0,0.1);
                     ">
                 """,
                 unsafe_allow_html=True,
             )
 
-            # Scoreline Header
-            st.markdown(
-                f"<h3 style='text-align:center; margin-bottom:15px;'>{team_away} {predicted_away_score} – {predicted_home_score} {team_home}</h3>",
-                unsafe_allow_html=True,
-            )
-
-            col1, col2 = st.columns([1, 1])
+            # Logos + Scoreline Broadcast Style
+            col1, col_mid, col2 = st.columns([2, 3, 2])
 
             with col1:
                 if away_abbr:
-                    safe_logo(away_abbr, width=80)
-                st.markdown(f"### {team_away}")
-                st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_away_score}</b></p>", unsafe_allow_html=True)
-                st.markdown(f"<p style='font-size:18px; color:#ef4444;'>Win Probability: <b>{prob_away*100:.1f}%</b></p>", unsafe_allow_html=True)
+                    safe_logo(away_abbr, width=90)
+                st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
+
+            with col_mid:
+                st.markdown(
+                    f"<h2 style='text-align:center; margin:0;'>{predicted_away_score} – {predicted_home_score}</h2>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown("<p style='text-align:center; font-size:14px; color:#6b7280;'>Projected Score</p>", unsafe_allow_html=True)
 
             with col2:
                 if home_abbr:
-                    safe_logo(home_abbr, width=80)
-                st.markdown(f"### {team_home}")
-                st.markdown(f"<p style='font-size:18px;'>Projected Points: <b>{predicted_home_score}</b></p>", unsafe_allow_html=True)
-                st.markdown(f"<p style='font-size:18px; color:#2563eb;'>Win Probability: <b>{prob_home*100:.1f}%</b></p>", unsafe_allow_html=True)
+                    safe_logo(home_abbr, width=90)
+                st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
+
+            # Win Probabilities Row
+            st.markdown(
+                f"""
+                <div style="display:flex; justify-content:space-between; margin-top:15px;">
+                    <div style="flex:1; text-align:center; color:#ef4444;">
+                        <b>{prob_away*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
+                    </div>
+                    <div style="flex:1; text-align:center; color:#2563eb;">
+                        <b>{prob_home*100:.1f}%</b><br><span style="font-size:13px;">Win Prob</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
             st.markdown("</div>", unsafe_allow_html=True)
 
