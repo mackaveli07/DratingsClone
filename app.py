@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+from bs4 import BeautifulSoup
 from collections import defaultdict
 
 ### ---------- CONFIG ----------
@@ -101,12 +102,14 @@ def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
 def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
+    """Regress team ratings back toward average at season start."""
     for t in elo_ratings:
         elo_ratings[t] = base + reg * (elo_ratings[t] - base)
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
 
+    # Home field adjustment
     if home_team == team1:
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
@@ -115,11 +118,13 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
 
+    # Margin of victory multiplier
     margin = abs(score1 - score2)
     if margin == 0:
         margin = 1
     mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
 
+    # Update ratings with MOV scaling
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
 
@@ -149,67 +154,53 @@ def run_elo_pipeline(df):
 
     return dict(elo_ratings)
 
-### ---------- ESPN ODDS FETCHER ----------
-@st.cache_data(ttl=300)
-def get_espn_odds():
-    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-    resp = requests.get(url, timeout=15)
+### ---------- TEAMRANKINGS SCRAPER ----------
+@st.cache_data(ttl=3600)
+def get_teamrankings_odds():
+    url = "https://www.teamrankings.com/nfl/odds/"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    resp = requests.get(url, headers=headers, timeout=15)
     resp.raise_for_status()
-    data = resp.json()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
+    table = soup.select_one("table.tr-table")
+    if not table:
+        return {}
+
+    tbody = table.find("tbody")
+    if not tbody:
+        return {}
+
+    rows = tbody.find_all("tr") if tbody else []
     odds_index = {}
-    for event in data.get("events", []):
-        comps = event.get("competitions", [])
-        if not comps:
+    for tr in rows:
+        cols = [td.get_text(strip=True) for td in tr.find_all("td")]
+        if len(cols) < 6:
             continue
-        comp = comps[0]
+        team_away, team_home = cols[0], cols[1]
+        spread_away, spread_home = cols[2], cols[3]
+        ml_away, ml_home = cols[4], cols[5]
 
-        # ESPN sometimes uses "pickcenter" instead of "odds"
-        odds_list = comp.get("odds", []) or comp.get("pickcenter", [])
-        if not odds_list:
-            continue
-        odds = odds_list[0]
-
-        teams = comp.get("competitors", [])
-        if len(teams) != 2:
-            continue
-
-        team_home = map_team_name([t["team"]["displayName"] for t in teams if t.get("homeAway")=="home"][0])
-        team_away = map_team_name([t["team"]["displayName"] for t in teams if t.get("homeAway")=="away"][0])
-
-        # ESPN odds keys can differ: check for moneyline/spread keys
-        ml_home = odds.get("homeMoneyLine") or odds.get("homeTeamOdds", {}).get("moneyLine") or "N/A"
-        ml_away = odds.get("awayMoneyLine") or odds.get("awayTeamOdds", {}).get("moneyLine") or "N/A"
-        spread_home = odds.get("spread") or odds.get("homeTeamOdds", {}).get("spread") or "N/A"
-        spread_away = -float(spread_home) if spread_home not in ("N/A", None) else "N/A"
-
-        bookmaker = odds.get("provider", {}).get("name") or odds.get("provider", {}).get("id") or "ESPN"
-
-        key = frozenset([team_home, team_away])
+        key = frozenset([map_team_name(team_home), map_team_name(team_away)])
         odds_index[key] = {
-            "moneyline": {team_home: ml_home, team_away: ml_away},
-            "spread": {team_home: spread_home, team_away: spread_away},
-            "bookmaker": bookmaker,
+            "moneyline": {
+                map_team_name(team_home): ml_home,
+                map_team_name(team_away): ml_away,
+            },
+            "spread": {
+                map_team_name(team_home): spread_home,
+                map_team_name(team_away): spread_away,
+            },
+            "bookmaker": "TeamRankings",
         }
 
     return odds_index
-
 
 ### ---------- PROBABILITY HELPERS ----------
 def probability_to_moneyline(prob):
     if prob is None: return "N/A"
     if prob>=0.5: return f"-{round(100*prob/(1-prob))}"
     else: return f"+{round(100*(1-prob)/prob)}"
-
-def moneyline_to_prob(ml):
-    try:
-        ml = float(ml)
-    except:
-        return None
-    if ml < 0:
-        return -ml / (-ml + 100)
-    else:
-        return 100 / (ml + 100)
 
 ### ---------- CSS + UI ----------
 APP_CSS = """
@@ -221,7 +212,6 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 .team-logo { width: 56px; height: 56px; border-radius: 50%; object-fit: contain; background: white; }
 .team-name { font-weight: 700; font-size: 20px; color: #1e293b; flex-grow: 1; }
 .ml-badge { font-weight: 700; padding: 5px 10px; border-radius: 8px; background: #e0e7ff; color: #3730a3; font-size: 0.9rem; margin-right: 8px; }
-.value-bet { color:#16a34a; font-weight:700; margin-top:4px; }
 .prob-bar { height: 14px; border-radius: 8px; overflow: hidden; background: #e2e8f0; margin-top: 6px; }
 .prob-fill { height: 14px; }
 .home-color { background: #2563eb; }
@@ -230,7 +220,6 @@ h1 { color: #0f172a; font-weight: 800; letter-spacing: 1.2px; }
 </style>
 """
 
-### ---------- MAIN ----------
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo + Odds Dashboard", layout="wide")
 st.markdown(APP_CSS, unsafe_allow_html=True)
@@ -243,12 +232,23 @@ except Exception as e:
     st.error(f"Error loading Excel file or sheets: {e}")
     st.stop()
 
-# --- Compute league average total points from historical data ---  # NEW
-if {"score1","score2"} <= set(hist_df.columns):
-    NFL_AVG_TOTAL = (hist_df["score1"] + hist_df["score2"]).mean()
-else:
-    NFL_AVG_TOTAL = 44  # fallback
-st.caption(f"📊 Using historical average total points: {NFL_AVG_TOTAL:.2f}")  # optional display
+# --- Compute season-specific averages with regression toward overall ---
+NFL_AVG_TOTALS = {}
+overall_avg = 44
+alpha = 50  # smoothing factor
+
+if {"score1","score2","season"} <= set(hist_df.columns):
+    hist_df["total_points"] = hist_df["score1"] + hist_df["score2"]
+    overall_avg = hist_df["total_points"].mean()
+
+    grouped = hist_df.groupby("season")["total_points"].agg(["mean","count"])
+    for season, row in grouped.iterrows():
+        season_avg = row["mean"]
+        n = row["count"]
+        blended_avg = (season_avg * n + overall_avg * alpha) / (n + alpha)
+        NFL_AVG_TOTALS[season] = blended_avg
+
+st.caption(f"📊 Using regressed season-specific totals (overall avg: {overall_avg:.2f})")
 
 ratings = run_elo_pipeline(hist_df)
 
@@ -279,14 +279,18 @@ for idx,row in week_games.iterrows():
     predicted_ml_home = probability_to_moneyline(prob_home)
     predicted_ml_away = probability_to_moneyline(prob_away)
 
-    # Improved spread: Elo difference to point spread (25 Elo ~ 1 point)
     elo_diff = (elo_home + HOME_ADVANTAGE) - elo_away
     spread_home = round(-(elo_diff / 25),1)
     spread_away = -spread_home
 
-    # --- Score Projection using league average total ---  # NEW
-    predicted_home_score = round((NFL_AVG_TOTAL / 2) + (spread_home / 2), 1)
-    predicted_away_score = round((NFL_AVG_TOTAL / 2) - (spread_home / 2), 1)
+    season = row.get("season")
+    if season in NFL_AVG_TOTALS:
+        avg_total = NFL_AVG_TOTALS[season]
+    else:
+        avg_total = overall_avg
+
+    predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
+    predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
 
     odds_key = frozenset([team_home, team_away])
     live_ml_home, live_ml_away, live_spread_home, live_spread_away, bookmaker_name = "N/A","N/A","N/A","N/A","N/A"
@@ -311,7 +315,7 @@ for idx,row in week_games.iterrows():
                 <div class="team-name">{team_away}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_away}</span> <span class="ml-badge">Live ML: {live_ml_away}</span></div>
                 <div>Model Spread: <strong>{spread_away:+.1f}</strong> | Live Spread: <strong>{live_spread_away}</strong></div>
-                <div>Predicted Score: <strong>{predicted_away_score}</strong></div>  <!-- NEW -->
+                <div>Predicted Score: <strong>{predicted_away_score}</strong></div>
                 <div class="prob-bar"><div class="prob-fill away-color" style="width:{prob_away*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_away*100:.1f}% Win Probability</div>
             </div>
@@ -325,7 +329,7 @@ for idx,row in week_games.iterrows():
                 <div class="team-name">{team_home}</div>
                 <div><span class="ml-badge">Model ML: {predicted_ml_home}</span> <span class="ml-badge">Live ML: {live_ml_home}</span></div>
                 <div>Model Spread: <strong>{spread_home:+.1f}</strong> | Live Spread: <strong>{live_spread_home}</strong></div>
-                <div>Predicted Score: <strong>{predicted_home_score}</strong></div>  <!-- NEW -->
+                <div>Predicted Score: <strong>{predicted_home_score}</strong></div>
                 <div class="prob-bar"><div class="prob-fill home-color" style="width:{prob_home*100:.1f}%"></div></div>
                 <div class="prob-text">{prob_home*100:.1f}% Win Probability</div>
             </div>
