@@ -15,56 +15,18 @@ SCHEDULE_SHEET = "2025 schedule"
 PICKS_SHEET = "Picks"
 
 NFL_FULL_NAMES = {
-    "ARI": "Arizona Cardinals","ATL": "Atlanta Falcons","BAL": "Baltimore Ravens","BUF": "Buffalo Bills",
-    "CAR": "Carolina Panthers","CHI": "Chicago Bears","CIN": "Cincinnati Bengals","CLE": "Cleveland Browns",
-    "DAL": "Dallas Cowboys","DEN": "Denver Broncos","DET": "Detroit Lions","GB": "Green Bay Packers",
-    "HOU": "Houston Texans","IND": "Indianapolis Colts","JAX": "Jacksonville Jaguars","KC": "Kansas City Chiefs",
-    "LV": "Las Vegas Raiders","LAC": "Los Angeles Chargers","LA": "Los Angeles Rams","MIA": "Miami Dolphins",
-    "MIN": "Minnesota Vikings","NE": "New England Patriots","NO": "New Orleans Saints","NYG": "New York Giants",
-    "NYJ": "New York Jets","PHI": "Philadelphia Eagles","PIT": "Pittsburgh Steelers","SF": "San Francisco 49ers",
-    "SEA": "Seattle Seahawks","TB": "Tampa Bay Buccaneers","TEN": "Tennessee Titans","WAS": "Washington Commanders"
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LV": "Las Vegas Raiders", "LAC": "Los Angeles Chargers",
+    "LA": "Los Angeles Rams", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SF": "San Francisco 49ers", "SEA": "Seattle Seahawks", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders"
 }
-
-TEAM_COLORS = {
-    "ARI": ("#97233F", "#FFB612"), "ATL": ("#A71930", "#000000"), "BAL": ("#241773", "#9E7C0C"),
-    "BUF": ("#00338D", "#C60C30"), "CAR": ("#0085CA", "#101820"), "CHI": ("#0B162A", "#C83803"),
-    "CIN": ("#FB4F14", "#000000"), "CLE": ("#311D00", "#FF3C00"), "DAL": ("#041E42", "#869397"),
-    "DEN": ("#FB4F14", "#002244"), "DET": ("#0076B6", "#B0B7BC"), "GB": ("#203731", "#FFB612"),
-    "HOU": ("#03202F", "#A71930"), "IND": ("#002C5F", "#A2AAAD"), "JAX": ("#006778", "#D7A22A"),
-    "KC": ("#E31837", "#FFB81C"), "LV": ("#000000", "#A5ACAF"), "LAC": ("#0080C6", "#FFC20E"),
-    "LA": ("#003594", "#FFA300"), "MIA": ("#008E97", "#F58220"), "MIN": ("#4F2683", "#FFC62F"),
-    "NE": ("#002244", "#C60C30"), "NO": ("#D3BC8D", "#101820"), "NYG": ("#0B2265", "#A71930"),
-    "NYJ": ("#125740", "#000000"), "PHI": ("#004C54", "#A5ACAF"), "PIT": ("#101820", "#FFB612"),
-    "SF": ("#AA0000", "#B3995D"), "SEA": ("#002244", "#69BE28"), "TB": ("#D50A0A", "#FF7900"),
-    "TEN": ("#4B92DB", "#002A5C"), "WAS": ("#5A1414", "#FFB612")
-}
-
-### ---------- THEME ----------
-st.set_page_config(page_title="NFL Elo Projections", layout="wide")
-theme = st.radio("Theme", ["Light", "Dark"], horizontal=True, key="theme_toggle")
-
-if theme == "Dark":
-    st.markdown(
-        """
-        <style>
-        body { background-color: #0f172a; color: #f1f5f9; }
-        .stMarkdown, .stRadio, .stSelectbox, .stButton button { color: #f1f5f9 !important; }
-        div[data-testid="stExpander"] { background: rgba(255,255,255,0.08) !important; color:#f1f5f9 !important; }
-        </style>
-        """, unsafe_allow_html=True
-    )
-else:
-    st.markdown(
-        """
-        <style>
-        body { background-color: #f8fafc; color: #1e293b; }
-        .stMarkdown, .stRadio, .stSelectbox, .stButton button { color: #1e293b !important; }
-        div[data-testid="stExpander"] { background: rgba(0,0,0,0.04) !important; color:#1e293b !important; }
-        </style>
-        """, unsafe_allow_html=True
-    )
-
-st.title("🏈 NFL Elo Projections")
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
@@ -86,7 +48,9 @@ def safe_logo(abbr, width=64):
         st.image(path, width=width)
     else:
         st.markdown(
-            f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; display:flex; align-items:center; justify-content:center; border-radius:50%; font-size:12px; color:#475569;'>{abbr or '?'}</div>",
+            f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
+            f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
+            f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
             unsafe_allow_html=True,
         )
 
@@ -189,74 +153,109 @@ def default_kickoff_unix(game_date):
     return int(kickoff.timestamp())
 
 ### ---------- MAIN ----------
+st.set_page_config(page_title="NFL Elo Projections",layout="wide")
+st.title("🏈 NFL Elo Projections")
+
 try:
     hist_df=pd.read_excel(EXCEL_FILE,sheet_name=HIST_SHEET)
     sched_df=pd.read_excel(EXCEL_FILE,sheet_name=SCHEDULE_SHEET)
 except Exception as e:
     st.error(f"Error loading Excel: {e}"); st.stop()
 
+NFL_AVG_TOTALS={}; overall_avg=44; alpha=50
+if {"score1","score2","season"} <= set(hist_df.columns):
+    hist_df["total_points"]=hist_df["score1"]+hist_df["score2"]
+    overall_avg=hist_df["total_points"].mean()
+    grouped=hist_df.groupby("season")["total_points"].agg(["mean","count"])
+    for s,r in grouped.iterrows():
+        NFL_AVG_TOTALS[s]=(r["mean"]*r["count"]+overall_avg*alpha)/(r["count"]+alpha)
+
 ratings=run_elo_pipeline(hist_df)
 HOME_COL,AWAY_COL="team2","team1"
+
 tabs=st.tabs(["Matchups","Power Rankings","Pick Winners"])
 
 # --- Matchups Tab ---
 with tabs[0]:
-    weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
-    selected_week = st.selectbox("Select Week", weeks, index=max(0,len(weeks)-1), key="week_matchups")
-    week_games = sched_df[sched_df['week']==selected_week]
+    available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
+    selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_matchups")
+    week_games = sched_df[sched_df['week'] == selected_week]
 
     for _, row in week_games.iterrows():
         team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
         elo_home, elo_away = ratings.get(team_home, BASE_ELO), ratings.get(team_away, BASE_ELO)
-        abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
 
-        # Adjustments
-        inj_home, inj_away = fetch_injuries_espn(abbr_home), fetch_injuries_espn(abbr_away)
+        inj_home, inj_away = fetch_injuries_espn(get_abbr(team_home)), fetch_injuries_espn(get_abbr(team_away))
         elo_home_adj, elo_away_adj = elo_home + injury_adjustment(inj_home), elo_away + injury_adjustment(inj_away)
+
         prob_home = expected_score(elo_home_adj + HOME_ADVANTAGE, elo_away_adj)
         prob_away = 1 - prob_home
 
-        # Colors
-        color_home1, color_home2 = TEAM_COLORS.get(abbr_home, ("#2563eb","#3b82f6"))
-        color_away1, color_away2 = TEAM_COLORS.get(abbr_away, ("#ef4444","#f87171"))
+        kickoff_unix = default_kickoff_unix(row.get("date"))
+        weather = get_weather(team_home, kickoff_unix) if kickoff_unix else None
 
-        # Card
-        st.markdown("<div style='background: rgba(255,255,255,0.12); border-radius: 24px; padding: 25px; margin: 22px 0;'>", unsafe_allow_html=True)
-        col1, col_mid, col2 = st.columns([2,3,2])
-        with col1: safe_logo(abbr_away,100); st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
+        avg_total = NFL_AVG_TOTALS.get(row.get("season"), overall_avg)
+        if weather: avg_total += weather_adjustment(weather)
+
+        elo_diff = (elo_home_adj + HOME_ADVANTAGE) - elo_away_adj
+        spread_home = elo_diff / 25
+        predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
+        predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
+
+        # Card container
+        st.markdown("<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>", unsafe_allow_html=True)
+
+        col1, col_mid, col2 = st.columns([2, 3, 2])
+        with col1:
+            safe_logo(get_abbr(team_away), 120)
+            st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
         with col_mid:
-            prob_html = (
-                f"<div style='width:100%; background:#e5e7eb; border-radius:12px; overflow:hidden; height:20px; margin:15px 0;'>"
-                f"<div style='width:{prob_away*100:.1f}%; background:linear-gradient(90deg,{color_away1},{color_away2}); height:100%; float:left;'></div>"
-                f"<div style='width:{prob_home*100:.1f}%; background:linear-gradient(90deg,{color_home1},{color_home2}); height:100%; float:right;'></div>"
-                "</div>"
-                f"<p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
-            )
+            st.markdown(f"<h1 style='text-align:center; margin:0;'>{predicted_away_score} – {predicted_home_score}</h1>", unsafe_allow_html=True)
+            prob_html = f"<div style='width:100%; background:#e5e7eb; border-radius:12px; overflow:hidden; height:20px; margin:15px 0;'><div style='width:{prob_away*100:.1f}%; background:#ef4444; height:100%; float:left;'></div><div style='width:{prob_home*100:.1f}%; background:#2563eb; height:100%; float:right;'></div></div><p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
             st.markdown(prob_html, unsafe_allow_html=True)
-        with col2: safe_logo(abbr_home,100); st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
+        with col2:
+            safe_logo(get_abbr(team_home), 120)
+            st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
+
+        with st.expander("🩺 Injury Report"):
+            if inj_home or inj_away:
+                st.markdown(f"**{team_home}**:")
+                for p in inj_home[:6]: st.write(f"- {p['name']} ({p['position']}): {p['status']}")
+                st.markdown(f"**{team_away}**:")
+                for p in inj_away[:6]: st.write(f"- {p['name']} ({p['position']}): {p['status']}")
+            else:
+                st.write("No major injuries reported.")
+
+        with st.expander("🌦️ Weather Forecast"):
+            if weather:
+                st.write(f"🌡️ Temp: {weather['temp']}°F")
+                st.write(f"💨 Wind: {weather['wind_speed']} mph")
+                st.write(f"🌦️ Condition: {weather['condition']}")
+            else:
+                st.write("No weather data available (forecast only within 5 days).")
+
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Power Rankings Tab ---
 with tabs[1]:
-    st.subheader("📊 Elo Power Rankings")
-    rows=[]
+    st.subheader("📊 Elo Power Rankings (with injury adjustments)")
+    rows = []
     for abbr, full in NFL_FULL_NAMES.items():
         base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
-        rows.append({"Team":full,"Abbr":abbr,"Adjusted Elo":round(adj,1)})
-    pr_df=pd.DataFrame(rows).sort_values("Adjusted Elo",ascending=False).reset_index(drop=True)
+        rows.append({"Team": full,"Abbr": abbr,"Adjusted Elo": round(adj, 1)})
+    pr_df = pd.DataFrame(rows).sort_values("Adjusted Elo", ascending=False).reset_index(drop=True)
 
     def render_row(row):
-        abbr=row["Abbr"]; logo_path=f"Logos/{abbr}.png"
-        logo_html=(f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>")
-        color1,color2=TEAM_COLORS.get(abbr,("#2563eb","#3b82f6"))
-        bar_width=(row["Adjusted Elo"]-1300)/4; bar_width=max(0,min(bar_width,100))
-        bar_html=f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px;'><div style='width:{bar_width:.1f}%; background:linear-gradient(90deg,{color1},{color2}); height:100%;'></div></div>"
+        abbr = row["Abbr"]; logo_path = f"Logos/{abbr}.png"
+        logo_html = (f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>")
+        bar_width = (row["Adjusted Elo"] - 1300) / 4; bar_width = max(0, min(bar_width, 100))
+        bar_html = f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;'><div style='width:{bar_width:.1f}%; background:#2563eb; height:100%;'></div></div>"
         return f"<div style='display:flex; align-items:center; justify-content:space-between; padding:6px 0;'><div style='display:flex; align-items:center;'>{logo_html}<span style='font-weight:600;'>{row['Team']}</span></div><div style='flex:1; margin:0 16px;'>{bar_html}</div><div style='width:60px; text-align:right; font-weight:600;'>{row['Adjusted Elo']}</div></div>"
 
-    leaderboard_html="<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
-    for _,r in pr_df.iterrows(): leaderboard_html+=render_row(r)
-    leaderboard_html+="</div>"
-    st.markdown(leaderboard_html,unsafe_allow_html=True)
+    leaderboard_html = "<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
+    for _, r in pr_df.iterrows(): leaderboard_html += render_row(r)
+    leaderboard_html += "</div>"
+    st.markdown(leaderboard_html, unsafe_allow_html=True)
 
 # --- Pick Winners Tab ---
 with tabs[2]:
