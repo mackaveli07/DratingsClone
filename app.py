@@ -176,7 +176,6 @@ HOME_COL,AWAY_COL="team2","team1"
 tabs=st.tabs(["Matchups","Power Rankings","Pick Winners"])
 
 # --- Matchups Tab ---
-# --- Matchups Tab ---
 with tabs[0]:
     available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
     selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_matchups")
@@ -211,7 +210,6 @@ with tabs[0]:
             safe_logo(get_abbr(team_away), 120)
             st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
         with col_mid:
-            # single-line score + prob bar (no triple quotes)
             st.markdown(f"<h1 style='text-align:center; margin:0;'>{predicted_away_score} – {predicted_home_score}</h1>", unsafe_allow_html=True)
             prob_html = f"<div style='width:100%; background:#e5e7eb; border-radius:12px; overflow:hidden; height:20px; margin:15px 0;'><div style='width:{prob_away*100:.1f}%; background:#ef4444; height:100%; float:left;'></div><div style='width:{prob_home*100:.1f}%; background:#2563eb; height:100%; float:right;'></div></div><p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
             st.markdown(prob_html, unsafe_allow_html=True)
@@ -219,7 +217,6 @@ with tabs[0]:
             safe_logo(get_abbr(team_home), 120)
             st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
 
-        # Injury expander
         with st.expander("🩺 Injury Report"):
             if inj_home or inj_away:
                 st.markdown(f"**{team_home}**:")
@@ -229,7 +226,6 @@ with tabs[0]:
             else:
                 st.write("No major injuries reported.")
 
-        # Weather expander
         with st.expander("🌦️ Weather Forecast"):
             if weather:
                 st.write(f"🌡️ Temp: {weather['temp']}°F")
@@ -243,40 +239,23 @@ with tabs[0]:
 # --- Power Rankings Tab ---
 with tabs[1]:
     st.subheader("📊 Elo Power Rankings (with injury adjustments)")
-
     rows = []
     for abbr, full in NFL_FULL_NAMES.items():
-        base = ratings.get(full, BASE_ELO)
-        inj = fetch_injuries_espn(abbr)
-        pen = injury_adjustment(inj)
-        adj = base + pen
-        rows.append({"Team": full, "Abbr": abbr, "Adjusted Elo": round(adj, 1)})
+        base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
+        rows.append({"Team": full,"Abbr": abbr,"Adjusted Elo": round(adj, 1)})
     pr_df = pd.DataFrame(rows).sort_values("Adjusted Elo", ascending=False).reset_index(drop=True)
 
     def render_row(row):
-        abbr = row["Abbr"]
-        logo_path = f"Logos/{abbr}.png"
-        if os.path.exists(logo_path):
-            logo_html = f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />"
-        else:
-            logo_html = f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>"
-
-        # scale Elo into a bar %
-        bar_width = (row["Adjusted Elo"] - 1300) / 4
-        bar_width = max(0, min(bar_width, 100))
-
+        abbr = row["Abbr"]; logo_path = f"Logos/{abbr}.png"
+        logo_html = (f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>")
+        bar_width = (row["Adjusted Elo"] - 1300) / 4; bar_width = max(0, min(bar_width, 100))
         bar_html = f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;'><div style='width:{bar_width:.1f}%; background:#2563eb; height:100%;'></div></div>"
-
         return f"<div style='display:flex; align-items:center; justify-content:space-between; padding:6px 0;'><div style='display:flex; align-items:center;'>{logo_html}<span style='font-weight:600;'>{row['Team']}</span></div><div style='flex:1; margin:0 16px;'>{bar_html}</div><div style='width:60px; text-align:right; font-weight:600;'>{row['Adjusted Elo']}</div></div>"
 
-    # Build leaderboard container (single string, no line breaks)
     leaderboard_html = "<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
-    for _, r in pr_df.iterrows():
-        leaderboard_html += render_row(r)
+    for _, r in pr_df.iterrows(): leaderboard_html += render_row(r)
     leaderboard_html += "</div>"
-
     st.markdown(leaderboard_html, unsafe_allow_html=True)
-
 
 # --- Pick Winners Tab ---
 with tabs[2]:
@@ -289,7 +268,7 @@ with tabs[2]:
         st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>",unsafe_allow_html=True)
         c1,c2,c3=st.columns([3,2,3])
         with c1: safe_logo(abbr_away,80); st.markdown(f"<h5>{t_away}</h5>",unsafe_allow_html=True)
-        with c2: st.markdown("<h5 style='text-align:center;'>Pick Winner</h5>",unsafe_allow_html=True)
+        with c2: st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
         with c3: safe_logo(abbr_home,80); st.markdown(f"<h5>{t_home}</h5>",unsafe_allow_html=True)
         choice=st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{t_home}_{t_away}"); picks[f"{t_away} @ {t_home}"]=choice
         st.markdown("</div>",unsafe_allow_html=True)
