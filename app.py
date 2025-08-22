@@ -197,7 +197,6 @@ OWM_API_KEY = st.secrets.get("OWM_API_KEY") or os.getenv("OWM_API_KEY") or ""
 
 @st.cache_data(show_spinner=False, ttl=1800)
 def get_weather(team, kickoff_unix):
-    """Fetch 3-hourly forecast and return values nearest to kickoff."""
     if team not in STADIUMS or not OWM_API_KEY:
         return None
     lat, lon = STADIUMS[team]["lat"], STADIUMS[team]["lon"]
@@ -211,15 +210,25 @@ def get_weather(team, kickoff_unix):
         data = resp.json()
     except Exception:
         return None
+
     forecasts = data.get("list", [])
     if not forecasts:
         return None
+
+    # Pick the forecast closest to kickoff
     closest = min(forecasts, key=lambda x: abs(int(x.get("dt", 0)) - int(kickoff_unix)))
+    dt_diff = abs(int(closest.get("dt", 0)) - int(kickoff_unix))
+
+    # Only accept if within 5 days (432,000 seconds)
+    if dt_diff > 432000:
+        return None
+
     return {
         "temp": closest.get("main", {}).get("temp"),
         "wind_speed": closest.get("wind", {}).get("speed"),
         "condition": (closest.get("weather") or [{}])[0].get("main", "")
     }
+
 
 def weather_adjustment(weather):
     """Return point adjustment to total score based on weather."""
