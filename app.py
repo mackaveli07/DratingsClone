@@ -151,43 +151,6 @@ def injury_adjustment(players):
         elif s in ["out","doubtful"]: penalty-=10
     return penalty
 
-### ---------- WEATHER ----------
-STADIUMS={"Buffalo Bills":{"lat":42.7738,"lon":-78.7868},"Green Bay Packers":{"lat":44.5013,"lon":-88.0622},
-"Chicago Bears":{"lat":41.8625,"lon":-87.6166},"Kansas City Chiefs":{"lat":39.0490,"lon":-94.4840},
-"New England Patriots":{"lat":42.0909,"lon":-71.2643},"Philadelphia Eagles":{"lat":39.9008,"lon":-75.1675}}
-
-OWM_API_KEY = os.getenv("OWM_API_KEY","")
-
-def get_weather(team,kickoff_unix):
-    if team not in STADIUMS or not OWM_API_KEY: return None
-    lat,lon=STADIUMS[team]["lat"],STADIUMS[team]["lon"]
-    url=f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=imperial"
-    try:
-        resp=requests.get(url,timeout=6); resp.raise_for_status(); data=resp.json()
-    except Exception: return None
-    forecasts=data.get("list",[]); 
-    if not forecasts: return None
-    closest=min(forecasts,key=lambda x:abs(int(x.get("dt",0))-int(kickoff_unix)))
-    dt_diff=abs(int(closest.get("dt",0))-int(kickoff_unix))
-    if dt_diff>432000: return None
-    return {"temp":closest["main"]["temp"],"wind_speed":closest["wind"]["speed"],"condition":closest["weather"][0]["main"]}
-
-def weather_adjustment(weather):
-    pen=0
-    if weather["wind_speed"]>20: pen-=2
-    if weather["condition"].lower() in ["rain","snow"]: pen-=3
-    if weather["temp"]<25: pen-=1
-    return pen
-
-def default_kickoff_unix(game_date):
-    if isinstance(game_date,str):
-        try: game_date=datetime.datetime.strptime(game_date,"%Y-%m-%d")
-        except: return 0
-    elif not isinstance(game_date,datetime.datetime): return 0
-    est=pytz.timezone("US/Eastern")
-    kickoff=est.localize(datetime.datetime(game_date.year,game_date.month,game_date.day,13,0,0))
-    return int(kickoff.timestamp())
-
 ### ---------- MAIN ----------
 try:
     hist_df=pd.read_excel(EXCEL_FILE,sheet_name=HIST_SHEET)
@@ -215,13 +178,31 @@ with tabs[0]:
         elo_home_adj, elo_away_adj = elo_home + injury_adjustment(inj_home), elo_away + injury_adjustment(inj_away)
         prob_home = expected_score(elo_home_adj + HOME_ADVANTAGE, elo_away_adj)
         prob_away = 1 - prob_home
+        predicted_winner = team_home if prob_home > prob_away else team_away
+
+        # Final score check
+        final_game = hist_df[
+            (hist_df["team1"].apply(map_team_name) == team_away) &
+            (hist_df["team2"].apply(map_team_name) == team_home)
+        ]
+        is_final = not final_game.empty
+        border_style = "2px solid transparent"
+        final_text = ""
+        if is_final:
+            s1, s2 = int(final_game.iloc[0]["score1"]), int(final_game.iloc[0]["score2"])
+            final_text = f"<p style='text-align:center; margin:5px 0;'>Final: {team_away} {s1} – {s2} {team_home}</p>"
+            actual_winner = team_away if s1 > s2 else team_home
+            if actual_winner == predicted_winner:
+                border_style = "3px solid #22c55e"  # green
+            else:
+                border_style = "3px solid #ef4444"  # red
 
         # Colors
         color_home1, color_home2 = TEAM_COLORS.get(abbr_home, ("#2563eb","#3b82f6"))
         color_away1, color_away2 = TEAM_COLORS.get(abbr_away, ("#ef4444","#f87171"))
 
         # Card
-        st.markdown("<div style='background: rgba(255,255,255,0.12); border-radius: 24px; padding: 25px; margin: 22px 0;'>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background: rgba(255,255,255,0.12); border-radius: 24px; padding: 25px; margin: 22px 0; border:{border_style};'>", unsafe_allow_html=True)
         col1, col_mid, col2 = st.columns([2,3,2])
         with col1: safe_logo(abbr_away,100); st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
         with col_mid:
@@ -233,11 +214,36 @@ with tabs[0]:
                 f"<p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
             )
             st.markdown(prob_html, unsafe_allow_html=True)
+            if final_text: st.markdown(final_text, unsafe_allow_html=True)
         with col2: safe_logo(abbr_home,100); st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Power Rankings Tab ---
 with tabs[1]:
+    # Accuracy tracker
+    accuracy_by_week = {}
+    for _, row in hist_df.iterrows():
+        t1, t2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
+        s1, s2 = row.get("score1", 0), row.get("score2", 0)
+        if pd.isna(s1) or pd.isna(s2): continue
+        elo1, elo2 = ratings.get(t1, BASE_ELO), ratings.get(t2, BASE_ELO)
+        prob1, prob2 = expected_score(elo1, elo2), 1-expected_score(elo1, elo2)
+        predicted = t1 if prob1 > prob2 else t2
+        actual = t1 if s1 > s2 else t2
+        wk = int(row.get("week", 0))
+        if wk not in accuracy_by_week: accuracy_by_week[wk] = {"correct":0,"total":0}
+        accuracy_by_week[wk]["total"] += 1
+        if predicted == actual: accuracy_by_week[wk]["correct"] += 1
+    st.subheader("📈 Model Accuracy by Week")
+    lines=[]; total_correct=total_games=0
+    for wk in sorted(accuracy_by_week.keys()):
+        c=accuracy_by_week[wk]["correct"]; t=accuracy_by_week[wk]["total"]
+        total_correct+=c; total_games+=t
+        pct=(c/t*100) if t else 0
+        lines.append(f"✅ Week {wk}: {c}/{t} ({pct:.1f}%)")
+    overall=(total_correct/total_games*100) if total_games else 0
+    st.markdown("<br>".join(lines)+f"<br><b>Overall: {total_correct}/{total_games} ({overall:.1f}%)</b>", unsafe_allow_html=True)
+
     st.subheader("📊 Elo Power Rankings")
     rows=[]
     for abbr, full in NFL_FULL_NAMES.items():
