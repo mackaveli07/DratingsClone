@@ -235,24 +235,51 @@ with tabs[0]:
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Power Rankings Tab ---
+# --- Power Rankings Tab ---
 with tabs[1]:
     st.subheader("📊 Elo Power Rankings (with injury adjustments)")
+
     rows = []
     for abbr, full in NFL_FULL_NAMES.items():
-        base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
-        rows.append({"Team": full,"Abbr": abbr,"Adjusted Elo": round(adj, 1)})
+        base = ratings.get(full, BASE_ELO)
+        inj = fetch_injuries_espn(abbr)
+        pen = injury_adjustment(inj)
+        adj = base + pen
+        rows.append({"Team": full, "Abbr": abbr, "Adjusted Elo": round(adj, 1)})
     pr_df = pd.DataFrame(rows).sort_values("Adjusted Elo", ascending=False).reset_index(drop=True)
 
     def render_row(row):
-        abbr = row["Abbr"]; logo_path = f"Logos/{abbr}.png"
-        logo_html = (f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px;'>{abbr}</span>")
-        bar_width = (row["Adjusted Elo"] - 1300) / 4; bar_width = max(0, min(bar_width, 100))
-        bar_html = f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;'><div style='width:{bar_width:.1f}%; background:#2563eb; height:100%;'></div></div>"
-        return f"<div style='display:flex; align-items:center; justify-content:space-between; padding:6px 0;'><div style='display:flex; align-items:center;'>{logo_html}<span style='font-weight:600;'>{row['Team']}</span></div><div style='flex:1; margin:0 16px;'>{bar_html}</div><div style='width:60px; text-align:right; font-weight:600;'>{row['Adjusted Elo']}</div></div>"
+        abbr = row["Abbr"]
+        logo_path = f"Logos/{abbr}.png"
+        if os.path.exists(logo_path):
+            logo_html = f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />"
+        else:
+            logo_html = f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>"
 
+        # scale Elo into a bar %
+        bar_width = (row["Adjusted Elo"] - 1300) / 4
+        bar_width = max(0, min(bar_width, 100))
+
+        bar_html = f"""
+        <div style="background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;">
+            <div style="width:{bar_width:.1f}%; background:#2563eb; height:100%;"></div>
+        </div>
+        """
+
+        return f"""
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 0;">
+            <div style="display:flex; align-items:center;">{logo_html}<span style="font-weight:600;">{row['Team']}</span></div>
+            <div style="flex:1; margin:0 16px;">{bar_html}</div>
+            <div style="width:60px; text-align:right; font-weight:600;">{row['Adjusted Elo']}</div>
+        </div>
+        """
+
+    # Build leaderboard container
     leaderboard_html = "<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
-    for _, r in pr_df.iterrows(): leaderboard_html += render_row(r)
+    for _, r in pr_df.iterrows():
+        leaderboard_html += render_row(r)
     leaderboard_html += "</div>"
+
     st.markdown(leaderboard_html, unsafe_allow_html=True)
 
 # --- Pick Winners Tab ---
