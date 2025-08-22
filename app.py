@@ -163,6 +163,7 @@ HOME_COL,AWAY_COL="team2","team1"
 tabs=st.tabs(["Matchups","Power Rankings","Pick Winners"])
 
 # --- Matchups Tab ---
+# --- Matchups Tab ---
 with tabs[0]:
     weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
     selected_week = st.selectbox("Select Week", weeks, index=max(0,len(weeks)-1), key="week_matchups")
@@ -178,33 +179,17 @@ with tabs[0]:
         elo_home_adj, elo_away_adj = elo_home + injury_adjustment(inj_home), elo_away + injury_adjustment(inj_away)
         prob_home = expected_score(elo_home_adj + HOME_ADVANTAGE, elo_away_adj)
         prob_away = 1 - prob_home
-        predicted_winner = team_home if prob_home > prob_away else team_away
-
-        # Final score check
-        final_game = hist_df[
-            (hist_df["team1"].apply(map_team_name) == team_away) &
-            (hist_df["team2"].apply(map_team_name) == team_home)
-        ]
-        is_final = not final_game.empty
-        border_style = "2px solid transparent"
-        final_text = ""
-        if is_final:
-            s1, s2 = int(final_game.iloc[0]["score1"]), int(final_game.iloc[0]["score2"])
-            final_text = f"<p style='text-align:center; margin:5px 0;'>Final: {team_away} {s1} – {s2} {team_home}</p>"
-            actual_winner = team_away if s1 > s2 else team_home
-            if actual_winner == predicted_winner:
-                border_style = "3px solid #22c55e"  # green
-            else:
-                border_style = "3px solid #ef4444"  # red
 
         # Colors
         color_home1, color_home2 = TEAM_COLORS.get(abbr_home, ("#2563eb","#3b82f6"))
         color_away1, color_away2 = TEAM_COLORS.get(abbr_away, ("#ef4444","#f87171"))
 
-        # Card
-        st.markdown(f"<div style='background: rgba(255,255,255,0.12); border-radius: 24px; padding: 25px; margin: 22px 0; border:{border_style};'>", unsafe_allow_html=True)
+        # Card (clean layout)
+        st.markdown("<div style='background: rgba(255,255,255,0.12); border-radius: 24px; padding: 25px; margin: 22px 0;'>", unsafe_allow_html=True)
         col1, col_mid, col2 = st.columns([2,3,2])
-        with col1: safe_logo(abbr_away,100); st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
+        with col1: 
+            safe_logo(abbr_away,100)
+            st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
         with col_mid:
             prob_html = (
                 f"<div style='width:100%; background:#e5e7eb; border-radius:12px; overflow:hidden; height:20px; margin:15px 0;'>"
@@ -214,9 +199,11 @@ with tabs[0]:
                 f"<p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
             )
             st.markdown(prob_html, unsafe_allow_html=True)
-            if final_text: st.markdown(final_text, unsafe_allow_html=True)
-        with col2: safe_logo(abbr_home,100); st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
+        with col2: 
+            safe_logo(abbr_home,100)
+            st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
+
 
 # --- Power Rankings Tab ---
 with tabs[1]:
