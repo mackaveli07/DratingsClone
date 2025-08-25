@@ -153,26 +153,39 @@ def default_kickoff_unix(game_date):
     return int(kickoff.timestamp())
 
 ### ---------- NFL THEMED HEADERS ----------
+def load_local_logo(path="Nfl.png"):
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    return None
+
+NFL_LOGO_B64 = load_local_logo()
+
 def nfl_header(title):
+    logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='60'>" if NFL_LOGO_B64 else ""
     st.markdown(
         f"""
         <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
                     padding: 20px; border-radius: 15px; text-align:center; display:flex; 
                     align-items:center; justify-content:center; gap:16px;'>
-            <img src='https://a.espncdn.com/i/teamlogos/nfl/nfl.png' height='60'>
+            {logo_html}
             <h1 style='color:white; margin:0; font-size:42px;'>{title}</h1>
-            <img src='https://a.espncdn.com/i/teamlogos/nfl/nfl.png' height='60'>
+            {logo_html}
         </div>
         """,
         unsafe_allow_html=True
     )
 
 def nfl_subheader(text, icon="📊"):
+    logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='32' style='margin-right:8px;'/>" if NFL_LOGO_B64 else ""
     st.markdown(
         f"""
         <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
-                    padding: 12px; border-radius: 12px; text-align:center;'>
+                    padding: 12px; border-radius: 12px; text-align:center; display:flex; 
+                    align-items:center; justify-content:center; gap:10px;'>
+            {logo_html}
             <h2 style='color:white; margin:0;'>{icon} {text}</h2>
+            {logo_html}
         </div>
         """,
         unsafe_allow_html=True
@@ -181,6 +194,9 @@ def nfl_subheader(text, icon="📊"):
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections",layout="wide")
 nfl_header("NFL Elo Projections")
+
+
+
 
 try:
     hist_df=pd.read_excel(EXCEL_FILE,sheet_name=HIST_SHEET)
