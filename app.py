@@ -84,6 +84,42 @@ def run_elo_pipeline(df):
                 update_ratings(elo_ratings, t1, t2, row.get("score1",0), row.get("score2",0), map_team_name(row.get("home_team",t2)))
     return dict(elo_ratings)
 
+# ---------- SCOREBOARD HELPERS ----------
+@st.cache_data(ttl=5)
+def fetch_nfl_scores():
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+    resp = requests.get(url)
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    games = []
+    today = datetime.date.today().isoformat()
+    for event in data.get("events", []):
+        if event.get("date", "").split("T")[0] != today:
+            continue
+        comp = event.get("competitions", [{}])[0]
+        competitors = comp.get("competitors", [])
+        if len(competitors) < 2:
+            continue
+        away = next((t for t in competitors if t["homeAway"] == "away"), None)
+        home = next((t for t in competitors if t["homeAway"] == "home"), None)
+        if not away or not home:
+            continue
+        status = comp.get("status", {})
+        situation = comp.get("situation", {})
+        info = {
+            "quarter": f"Q{status.get('period', 'N/A')}",
+            "clock": status.get("displayClock", ""),
+            "possession": situation.get("possession", {}).get("displayName", "")
+        }
+        games.append({
+            "away": away,
+            "home": home,
+            "info": info
+        })
+    return games
+
+
 ### ---------- INJURIES ----------
 ESPN_TEAM_IDS = { "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
 "HOU":34,"IND":11,"JAX":30,"KC":12,"LV":13,"LAC":24,"LA":14,"MIA":15,"MIN":16,"NE":17,"NO":18,"NYG":19,"NYJ":20,"PHI":21,
@@ -153,7 +189,7 @@ def default_kickoff_unix(game_date):
     return int(kickoff.timestamp())
 
 ### ---------- NFL THEMED HEADERS ----------
-def load_local_logo(path="Nfl.png"):
+def load_local_logo(path="NFL.png"):
     if os.path.exists(path):
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
@@ -216,7 +252,8 @@ if {"score1","score2","season"} <= set(hist_df.columns):
 ratings=run_elo_pipeline(hist_df)
 HOME_COL,AWAY_COL="team2","team1"
 
-tabs=st.tabs(["Matchups","Power Rankings","Pick Winners"])
+tabs=st.tabs(["Matchups","Power Rankings","Pick Winners","Scoreboard"])
+
 
 # --- Matchups Tab ---
 with tabs[0]:
@@ -322,3 +359,37 @@ with tabs[2]:
                 df.to_excel(w,sheet_name=PICKS_SHEET,index=False)
             st.success("✅ Picks saved!")
         except Exception as e: st.error(f"Error saving picks: {e}")
+
+# --- Scoreboard Tab ---
+with tabs[3]:
+    nfl_subheader("Live NFL Scoreboard", "🏟️")
+    games = fetch_nfl_scores()
+    if not games:
+        st.info("No NFL games today.")
+    for game in games:
+        away, home, info = game["away"], game["home"], game["info"]
+        col1, col2, col3 = st.columns([3,2,3])
+        with col1:
+            st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 10px; padding: 10px; text-align:center;'>
+                    <h3>{away['team']['displayName']}</h3>
+                    <img src="{away['team']['logo']}" width="100" />
+                    <p style='font-size: 36px; margin: 10px 0;'>{away.get('score', '0')}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+                <div style='text-align:center;'>
+                    <p><strong>{info['quarter']} {info['clock']}</strong></p>
+                    <p>🟢 Possession: {info['possession']}</p>
+                </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"""
+                <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 10px; padding: 10px; text-align:center;'>
+                    <h3>{home['team']['displayName']}</h3>
+                    <img src="{home['team']['logo']}" width="100" />
+                    <p style='font-size: 36px; margin: 10px 0;'>{home.get('score', '0')}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
