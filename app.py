@@ -164,11 +164,11 @@ NFL_LOGO_B64 = load_local_logo()
 def nfl_header(title):
     logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='60'>" if NFL_LOGO_B64 else ""
     st.markdown(
-        f"""
+        r"""
         <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
                     padding: 20px; border-radius: 15px; text-align:center; display:flex; 
                     align-items:center; justify-content:center; gap:16px;'>
-            {logo_html}
+            """ + logo_html + f"""
             <h1 style='color:white; margin:0; font-size:42px;'>{title}</h1>
             {logo_html}
         </div>
@@ -179,17 +179,18 @@ def nfl_header(title):
 def nfl_subheader(text, icon="📊"):
     logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='32' style='margin-right:8px;'/>" if NFL_LOGO_B64 else ""
     st.markdown(
-        f"""
+        r"""
         <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
                     padding: 12px; border-radius: 12px; text-align:center; display:flex; 
                     align-items:center; justify-content:center; gap:10px;'>
-            {logo_html}
+        """ + logo_html + f"""
             <h2 style='color:white; margin:0;'>{icon} {text}</h2>
             {logo_html}
         </div>
         """,
         unsafe_allow_html=True
     )
+
 
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections",layout="wide")
