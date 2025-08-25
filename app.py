@@ -152,9 +152,35 @@ def default_kickoff_unix(game_date):
     kickoff=est.localize(datetime.datetime(game_date.year,game_date.month,game_date.day,13,0,0))
     return int(kickoff.timestamp())
 
+### ---------- NFL THEMED HEADERS ----------
+def nfl_header(title):
+    st.markdown(
+        f"""
+        <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
+                    padding: 20px; border-radius: 15px; text-align:center; display:flex; 
+                    align-items:center; justify-content:center; gap:16px;'>
+            <img src='https://a.espncdn.com/i/teamlogos/nfl/nfl.png' height='60'>
+            <h1 style='color:white; margin:0; font-size:42px;'>{title}</h1>
+            <img src='https://a.espncdn.com/i/teamlogos/nfl/nfl.png' height='60'>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def nfl_subheader(text, icon="📊"):
+    st.markdown(
+        f"""
+        <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
+                    padding: 12px; border-radius: 12px; text-align:center;'>
+            <h2 style='color:white; margin:0;'>{icon} {text}</h2>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections",layout="wide")
-st.title("🏈 NFL Elo Projections")
+nfl_header("NFL Elo Projections")
 
 try:
     hist_df=pd.read_excel(EXCEL_FILE,sheet_name=HIST_SHEET)
@@ -238,7 +264,7 @@ with tabs[0]:
 
 # --- Power Rankings Tab ---
 with tabs[1]:
-    st.subheader("📊 Elo Power Rankings (with injury adjustments)")
+    nfl_subheader("Elo Power Rankings (with injury adjustments)", "📊")
     rows = []
     for abbr, full in NFL_FULL_NAMES.items():
         base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
@@ -259,7 +285,7 @@ with tabs[1]:
 
 # --- Pick Winners Tab ---
 with tabs[2]:
-    st.subheader("📝 Weekly Pick’em")
+    nfl_subheader("Weekly Pick’em", "📝")
     week=st.selectbox("Select Week",sorted(sched_df['week'].dropna().unique().astype(int)),key="week_picks")
     games=sched_df[sched_df['week']==week]; picks={}
     for _,row in games.iterrows():
