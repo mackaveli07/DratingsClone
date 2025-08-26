@@ -28,6 +28,17 @@ NFL_FULL_NAMES = {
     "TEN": "Tennessee Titans", "WAS": "Washington Commanders"
 }
 
+TEAM_COLORS = {
+    "ARI": "#97233F", "ATL": "#A71930", "BAL": "#241773", "BUF": "#00338D",
+    "CAR": "#0085CA", "CHI": "#0B162A", "CIN": "#FB4F14", "CLE": "#311D00",
+    "DAL": "#003594", "DEN": "#FB4F14", "DET": "#0076B6", "GB": "#203731",
+    "HOU": "#03202F", "IND": "#002C5F", "JAX": "#006778", "KC": "#E31837",
+    "LV": "#000000", "LAC": "#0080C6", "LA": "#003594", "MIA": "#008E97",
+    "MIN": "#4F2683", "NE": "#002244", "NO": "#D3BC8D", "NYG": "#0B2265",
+    "NYJ": "#125740", "PHI": "#004C54", "PIT": "#FFB612", "SF": "#AA0000",
+    "SEA": "#002244", "TB": "#D50A0A", "TEN": "#0C2340", "WAS": "#5A1414"
+}
+
 ### ---------- HELPERS ----------
 def map_team_name(name):
     if not name: return "Unknown"
@@ -53,6 +64,22 @@ def safe_logo(abbr, width=64):
             f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
             unsafe_allow_html=True,
         )
+
+def neon_text(text, abbr, size=24):
+    color = TEAM_COLORS.get(abbr, "#39ff14")
+    return f"""
+    <span style="
+        color: {color};
+        font-size: {size}px;
+        font-weight: bold;
+        text-shadow:
+            0 0 5px {color},
+            0 0 10px {color},
+            0 0 20px {color},
+            0 0 40px {color},
+            0 0 80px {color};
+    ">{text}</span>
+    """
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
@@ -254,7 +281,6 @@ HOME_COL,AWAY_COL="team2","team1"
 
 tabs=st.tabs(["Matchups","Power Rankings","Pick Winners","Scoreboard"])
 
-
 # --- Matchups Tab ---
 with tabs[0]:
     available_weeks = sorted(sched_df['week'].dropna().unique().astype(int).tolist())
@@ -263,79 +289,20 @@ with tabs[0]:
 
     for _, row in week_games.iterrows():
         team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
-        elo_home, elo_away = ratings.get(team_home, BASE_ELO), ratings.get(team_away, BASE_ELO)
 
-        inj_home, inj_away = fetch_injuries_espn(get_abbr(team_home)), fetch_injuries_espn(get_abbr(team_away))
-        elo_home_adj, elo_away_adj = elo_home + injury_adjustment(inj_home), elo_away + injury_adjustment(inj_away)
-
-        prob_home = expected_score(elo_home_adj + HOME_ADVANTAGE, elo_away_adj)
-        prob_away = 1 - prob_home
-
-        kickoff_unix = default_kickoff_unix(row.get("date"))
-        weather = get_weather(team_home, kickoff_unix) if kickoff_unix else None
-
-        avg_total = NFL_AVG_TOTALS.get(row.get("season"), overall_avg)
-        if weather: avg_total += weather_adjustment(weather)
-
-        elo_diff = (elo_home_adj + HOME_ADVANTAGE) - elo_away_adj
-        spread_home = elo_diff / 25
-        predicted_home_score = round((avg_total / 2) + (spread_home / 2), 1)
-        predicted_away_score = round((avg_total / 2) - (spread_home / 2), 1)
-
-        # Card container
         st.markdown("<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>", unsafe_allow_html=True)
 
         col1, col_mid, col2 = st.columns([2, 3, 2])
         with col1:
             safe_logo(get_abbr(team_away), 120)
-            st.markdown(f"<h4 style='text-align:center'>{team_away}</h4>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center'>{neon_text(team_away, get_abbr(team_away), 28)}</div>", unsafe_allow_html=True)
         with col_mid:
-            st.markdown(f"<h1 style='text-align:center; margin:0;'>{predicted_away_score} – {predicted_home_score}</h1>", unsafe_allow_html=True)
-            prob_html = f"<div style='width:100%; background:#e5e7eb; border-radius:12px; overflow:hidden; height:20px; margin:15px 0;'><div style='width:{prob_away*100:.1f}%; background:#ef4444; height:100%; float:left;'></div><div style='width:{prob_home*100:.1f}%; background:#2563eb; height:100%; float:right;'></div></div><p style='text-align:center; font-size:14px; color:#6b7280;'>{team_away} {prob_away*100:.1f}% | {prob_home*100:.1f}% {team_home}</p>"
-            st.markdown(prob_html, unsafe_allow_html=True)
+            st.markdown(f"<h1 style='text-align:center; margin:0;'>{'--'} – {'--'}</h1>", unsafe_allow_html=True)
         with col2:
             safe_logo(get_abbr(team_home), 120)
-            st.markdown(f"<h4 style='text-align:center'>{team_home}</h4>", unsafe_allow_html=True)
-
-        with st.expander("🩺 Injury Report"):
-            if inj_home or inj_away:
-                st.markdown(f"**{team_home}**:")
-                for p in inj_home[:6]: st.write(f"- {p['name']} ({p['position']}): {p['status']}")
-                st.markdown(f"**{team_away}**:")
-                for p in inj_away[:6]: st.write(f"- {p['name']} ({p['position']}): {p['status']}")
-            else:
-                st.write("No major injuries reported.")
-
-        with st.expander("🌦️ Weather Forecast"):
-            if weather:
-                st.write(f"🌡️ Temp: {weather['temp']}°F")
-                st.write(f"💨 Wind: {weather['wind_speed']} mph")
-                st.write(f"🌦️ Condition: {weather['condition']}")
-            else:
-                st.write("No weather data available (forecast only within 5 days).")
+            st.markdown(f"<div style='text-align:center'>{neon_text(team_home, get_abbr(team_home), 28)}</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-# --- Power Rankings Tab ---
-with tabs[1]:
-    nfl_subheader("Elo Power Rankings (with injury adjustments)", "📊")
-    rows = []
-    for abbr, full in NFL_FULL_NAMES.items():
-        base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
-        rows.append({"Team": full,"Abbr": abbr,"Adjusted Elo": round(adj, 1)})
-    pr_df = pd.DataFrame(rows).sort_values("Adjusted Elo", ascending=False).reset_index(drop=True)
-
-    def render_row(row):
-        abbr = row["Abbr"]; logo_path = f"Logos/{abbr}.png"
-        logo_html = (f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>")
-        bar_width = (row["Adjusted Elo"] - 1300) / 4; bar_width = max(0, min(bar_width, 100))
-        bar_html = f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;'><div style='width:{bar_width:.1f}%; background:#2563eb; height:100%;'></div></div>"
-        return f"<div style='display:flex; align-items:center; justify-content:space-between; padding:6px 0;'><div style='display:flex; align-items:center;'>{logo_html}<span style='font-weight:600;'>{row['Team']}</span></div><div style='flex:1; margin:0 16px;'>{bar_html}</div><div style='width:60px; text-align:right; font-weight:600;'>{row['Adjusted Elo']}</div></div>"
-
-    leaderboard_html = "<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
-    for _, r in pr_df.iterrows(): leaderboard_html += render_row(r)
-    leaderboard_html += "</div>"
-    st.markdown(leaderboard_html, unsafe_allow_html=True)
 
 # --- Pick Winners Tab ---
 with tabs[2]:
@@ -347,18 +314,11 @@ with tabs[2]:
         abbr_home,abbr_away=get_abbr(t_home),get_abbr(t_away)
         st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>",unsafe_allow_html=True)
         c1,c2,c3=st.columns([3,2,3])
-        with c1: safe_logo(abbr_away,80); st.markdown(f"<h5>{t_away}</h5>",unsafe_allow_html=True)
+        with c1: safe_logo(abbr_away,80); st.markdown(neon_text(t_away, abbr_away, 20),unsafe_allow_html=True)
         with c2: st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
-        with c3: safe_logo(abbr_home,80); st.markdown(f"<h5>{t_home}</h5>",unsafe_allow_html=True)
+        with c3: safe_logo(abbr_home,80); st.markdown(neon_text(t_home, abbr_home, 20),unsafe_allow_html=True)
         choice=st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{t_home}_{t_away}"); picks[f"{t_away} @ {t_home}"]=choice
         st.markdown("</div>",unsafe_allow_html=True)
-    if st.button("💾 Save Picks"):
-        try:
-            df=pd.DataFrame([{"Game":g,"Pick":p} for g,p in picks.items()])
-            with pd.ExcelWriter(EXCEL_FILE,mode="a",engine="openpyxl",if_sheet_exists="replace") as w:
-                df.to_excel(w,sheet_name=PICKS_SHEET,index=False)
-            st.success("✅ Picks saved!")
-        except Exception as e: st.error(f"Error saving picks: {e}")
 
 # --- Scoreboard Tab ---
 with tabs[3]:
@@ -372,7 +332,7 @@ with tabs[3]:
         with col1:
             st.markdown(f"""
                 <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 10px; padding: 10px; text-align:center;'>
-                    <h3>{away['team']['displayName']}</h3>
+                    {neon_text(away['team']['displayName'], away['team']['abbreviation'], 28)}
                     <img src="{away['team']['logo']}" width="100" />
                     <p style='font-size: 36px; margin: 10px 0;'>{away.get('score', '0')}</p>
                 </div>
@@ -387,7 +347,7 @@ with tabs[3]:
         with col3:
             st.markdown(f"""
                 <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 10px; padding: 10px; text-align:center;'>
-                    <h3>{home['team']['displayName']}</h3>
+                    {neon_text(home['team']['displayName'], home['team']['abbreviation'], 28)}
                     <img src="{home['team']['logo']}" width="100" />
                     <p style='font-size: 36px; margin: 10px 0;'>{home.get('score', '0')}</p>
                 </div>
