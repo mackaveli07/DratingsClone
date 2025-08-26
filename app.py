@@ -44,7 +44,6 @@ TEAM_COLORS = {
 # ==========================
 # Helper Functions
 # ==========================
-
 def map_team_name(name):
     if not name:
         return "Unknown"
@@ -56,13 +55,11 @@ def map_team_name(name):
             return full
     return name
 
-
 def get_abbr(team_full):
     for abbr, full in NFL_FULL_NAMES.items():
         if full == team_full:
             return abbr
     return None
-
 
 def safe_logo(abbr, width=64):
     path = f"Logos/{abbr}.png"
@@ -75,7 +72,6 @@ def safe_logo(abbr, width=64):
             f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
             unsafe_allow_html=True,
         )
-
 
 def neon_text(text, abbr, size=24):
     color = TEAM_COLORS.get(abbr, "#39ff14")
@@ -93,19 +89,15 @@ def neon_text(text, abbr, size=24):
     ">{text}</span>
     """
 
-
 # ==========================
 # Elo System
 # ==========================
-
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
-
 
 def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
     for t in list(elo_ratings.keys()):
         elo_ratings[t] = base + reg * (elo_ratings[t] - base)
-
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
@@ -123,7 +115,6 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elo_ratings[team1] += K * mov_mult * (actual1 - exp1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
 
-
 def run_elo_pipeline(df):
     elo_ratings = defaultdict(lambda: BASE_ELO)
     if {"season", "week"} <= set(df.columns):
@@ -136,15 +127,17 @@ def run_elo_pipeline(df):
                 t1, t2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
                 home_team = map_team_name(row.get("home_team", t2))
                 update_ratings(
-                    elo_ratings, t1, t2, int(row.get("score1", 0) or 0), int(row.get("score2", 0) or 0), home_team
+                    elo_ratings,
+                    t1, t2,
+                    int(row.get("score1", 0) or 0),
+                    int(row.get("score2", 0) or 0),
+                    home_team
                 )
     return dict(elo_ratings)
-
 
 # ==========================
 # ESPN Scoreboard Helpers
 # ==========================
-
 @st.cache_data(ttl=5)
 def fetch_nfl_scores():
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
@@ -180,7 +173,6 @@ def fetch_nfl_scores():
         games.append({"away": away, "home": home, "info": info})
     return games
 
-
 # ==========================
 # Injuries
 # ==========================
@@ -190,7 +182,6 @@ ESPN_TEAM_IDS = {
     "LA": 14, "MIA": 15, "MIN": 16, "NE": 17, "NO": 18, "NYG": 19, "NYJ": 20, "PHI": 21, "PIT": 23,
     "SF": 25, "SEA": 26, "TB": 27, "TEN": 10, "WAS": 28
 }
-
 
 def fetch_injuries_espn(team_abbr):
     team_id = ESPN_TEAM_IDS.get(team_abbr)
@@ -212,7 +203,6 @@ def fetch_injuries_espn(team_abbr):
         })
     return players
 
-
 def injury_adjustment(players):
     penalty = 0
     for p in players:
@@ -225,7 +215,6 @@ def injury_adjustment(players):
         elif s in ["out", "doubtful"]:
             penalty -= 10
     return penalty
-
 
 # ==========================
 # Weather
@@ -240,7 +229,6 @@ STADIUMS = {
 }
 
 OWM_API_KEY = os.getenv("OWM_API_KEY", "")
-
 
 def get_weather(team, kickoff_unix):
     if team not in STADIUMS or not OWM_API_KEY:
@@ -269,7 +257,6 @@ def get_weather(team, kickoff_unix):
         "condition": closest["weather"][0]["main"],
     }
 
-
 def weather_adjustment(weather):
     pen = 0
     if weather["wind_speed"] > 20:
@@ -279,7 +266,6 @@ def weather_adjustment(weather):
     if weather["temp"] < 25:
         pen -= 1
     return pen
-
 
 def default_kickoff_unix(game_date):
     if isinstance(game_date, str):
@@ -293,20 +279,16 @@ def default_kickoff_unix(game_date):
     kickoff = est.localize(datetime.datetime(game_date.year, game_date.month, game_date.day, 13, 0, 0))
     return int(kickoff.timestamp())
 
-
 # ==========================
 # UI Headers
 # ==========================
-
 def load_local_logo(path="NFL.png"):
     if os.path.exists(path):
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     return None
 
-
 NFL_LOGO_B64 = load_local_logo()
-
 
 def nfl_header(title):
     logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='60'>" if NFL_LOGO_B64 else ""
@@ -323,12 +305,10 @@ def nfl_header(title):
         unsafe_allow_html=True,
     )
 
-
 def nfl_subheader(text, icon="📊"):
     logo_html = (
         f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='32' style='margin-right:8px;'/>"
-        if NFL_LOGO_B64
-        else ""
+        if NFL_LOGO_B64 else ""
     )
     st.markdown(
         r"""
@@ -343,11 +323,9 @@ def nfl_subheader(text, icon="📊"):
         unsafe_allow_html=True,
     )
 
-
 # ==========================
 # App
 # ==========================
-
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
@@ -359,7 +337,7 @@ except Exception as e:
     st.error(f"Error loading Excel: {e}")
     st.stop()
 
-# Season scoring baselines (optional, used if needed elsewhere)
+# Season scoring baselines (optional)
 NFL_AVG_TOTALS = {}
 alpha = 50
 if {"score1", "score2", "season"} <= set(hist_df.columns):
@@ -382,9 +360,17 @@ tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard"])
 # Matchups
 # ------------------
 with tabs[0]:
-    available_weeks = sorted(sched_df['week'].dropna().astype(int).unique().tolist())
-    selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_matchups")
-    week_games = sched_df[sched_df['week'] == selected_week]
+    available_weeks = (
+        sched_df['week']
+        .dropna()
+        .apply(lambda x: int(x) if str(x).isdigit() else None)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    available_weeks = sorted(set(available_weeks))
+    selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks) - 1), key="week_matchups")
+    week_games = sched_df[sched_df['week'].astype(str) == str(selected_week)]
 
     for _, row in week_games.iterrows():
         team_home, team_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
@@ -394,10 +380,10 @@ with tabs[0]:
 
         # Add home advantage for win prob calculation
         prob_home = expected_score(elo_home + HOME_ADVANTAGE, elo_away)
-        prob_away = 1 - prob_home
 
         st.markdown(
-            "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
+            "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
+            "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
             unsafe_allow_html=True,
         )
 
@@ -450,9 +436,17 @@ with tabs[1]:
 # ------------------
 with tabs[2]:
     nfl_subheader("Weekly Pick'em", "📝")
-    available_weeks = sorted(sched_df['week'].dropna().astype(int).unique().tolist())
-    selected_week = st.selectbox("Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_picks")
-    week_games = sched_df[sched_df['week'] == selected_week]
+    available_weeks = (
+        sched_df['week']
+        .dropna()
+        .apply(lambda x: int(x) if str(x).isdigit() else None)
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    available_weeks = sorted(set(available_weeks))
+    selected_week = st.selectbox("Week", available_weeks, index=max(0, len(available_weeks) - 1), key="week_picks")
+    week_games = sched_df[sched_df['week'].astype(str) == str(selected_week)]
 
     picks = {}
     for _, row in week_games.iterrows():
@@ -473,9 +467,7 @@ with tabs[2]:
         st.markdown("</div>", unsafe_allow_html=True)
 
     if st.button("Show My Picks Summary"):
-        summary = pd.DataFrame(
-            [{"Matchup": k, "Pick": v} for k, v in picks.items()]
-        )
+        summary = pd.DataFrame([{"Matchup": k, "Pick": v} for k, v in picks.items()])
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
 # ------------------
@@ -514,7 +506,7 @@ with tabs[3]:
                 f"""
                 <div style='text-align:center;'>
                     <p><strong>{info.get('shortDetail') or (info.get('quarter') + ' ' + info.get('clock'))}</strong></p>
-                    <p>Possession: {info.get('possession') or '-'} </p>
+                    <p>Possession: {info.get('possession') or '-'}</p>
                 </div>
                 """,
                 unsafe_allow_html=True,
