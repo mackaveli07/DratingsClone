@@ -259,11 +259,55 @@ HOME_COL,AWAY_COL="team2","team1"
 
 tabs=st.tabs(["Matchups","Power Rankings","Pick Winners","Scoreboard"])
 
-# ---------------- your existing Matchups, Power Rankings, Pick Winners code stays here ---------------- #
+# ---------------- your existing Matchups, Power Rankings, Pick Winners code goes here ---------------- #
+with tabs[1]:
+    nfl_subheader("Elo Power Rankings (with injury adjustments)", "📊")
+    rows = []
+    for abbr, full in NFL_FULL_NAMES.items():
+        base = ratings.get(full, BASE_ELO); inj = fetch_injuries_espn(abbr); pen = injury_adjustment(inj); adj = base + pen
+        rows.append({"Team": full,"Abbr": abbr,"Adjusted Elo": round(adj, 1)})
+    pr_df = pd.DataFrame(rows).sort_values("Adjusted Elo", ascending=False).reset_index(drop=True)
+
+    def render_row(row):
+        abbr = row["Abbr"]; logo_path = f"Logos/{abbr}.png"
+        logo_html = (f"<img src='data:image/png;base64,{base64.b64encode(open(logo_path,'rb').read()).decode()}' style='height:28px; vertical-align:middle; margin-right:8px;' />" if os.path.exists(logo_path) else f"<span style='margin-right:8px; font-weight:600;'>{abbr}</span>")
+        bar_width = (row["Adjusted Elo"] - 1300) / 4; bar_width = max(0, min(bar_width, 100))
+        bar_html = f"<div style='background:#e5e7eb; border-radius:8px; width:100%; height:14px; overflow:hidden;'><div style='width:{bar_width:.1f}%; background:#2563eb; height:100%;'></div></div>"
+        return f"<div style='display:flex; align-items:center; justify-content:space-between; padding:6px 0;'><div style='display:flex; align-items:center;'>{logo_html}<span style='font-weight:600;'>{row['Team']}</span></div><div style='flex:1; margin:0 16px;'>{bar_html}</div><div style='width:60px; text-align:right; font-weight:600;'>{row['Adjusted Elo']}</div></div>"
+
+    leaderboard_html = "<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:18px;'>"
+    for _, r in pr_df.iterrows(): leaderboard_html += render_row(r)
+    leaderboard_html += "</div>"
+    st.markdown(leaderboard_html, unsafe_allow_html=True)
+
+# --- Pick Winners Tab ---
+with tabs[2]:
+    nfl_subheader("Weekly Pick’em", "📝")
+    week=st.selectbox("Select Week",sorted(sched_df['week'].dropna().unique().astype(int)),key="week_picks")
+    games=sched_df[sched_df['week']==week]; picks={}
+    for _,row in games.iterrows():
+        t_home,t_away=map_team_name(row[HOME_COL]),map_team_name(row[AWAY_COL])
+        abbr_home,abbr_away=get_abbr(t_home),get_abbr(t_away)
+        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>",unsafe_allow_html=True)
+        c1,c2,c3=st.columns([3,2,3])
+        with c1: safe_logo(abbr_away,80); st.markdown(f"<h5>{t_away}</h5>",unsafe_allow_html=True)
+        with c2: st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
+        with c3: safe_logo(abbr_home,80); st.markdown(f"<h5>{t_home}</h5>",unsafe_allow_html=True)
+        choice=st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{t_home}_{t_away}"); picks[f"{t_away} @ {t_home}"]=choice
+        st.markdown("</div>",unsafe_allow_html=True)
+    if st.button("💾 Save Picks"):
+        try:
+            df=pd.DataFrame([{"Game":g,"Pick":p} for g,p in picks.items()])
+            with pd.ExcelWriter(EXCEL_FILE,mode="a",engine="openpyxl",if_sheet_exists="replace") as w:
+                df.to_excel(w,sheet_name=PICKS_SHEET,index=False)
+            st.success("✅ Picks saved!")
+        except Exception as e: st.error(f"Error saving picks: {e}")
 
 # --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("Live NFL Scoreboard", "🏟️")
+    st_autorefresh = st.empty()
+    st_autorefresh = st.experimental_rerun  # auto-refresh placeholder
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today.")
