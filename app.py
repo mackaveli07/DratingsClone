@@ -489,51 +489,62 @@ with tabs[2]:
         picks[f"{t_away} @ {t_home}"] = choice
         st.markdown("</div>", unsafe_allow_html=True)
 
+
 # --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
     if not games:
-        st.info("No games found for the current week.")
-
+        st.info("No NFL games today or scheduled.")
     for game in games:
-        away, home, state, status_text = game["away"], game["home"], game["state"], game["status"]
+        away, home, info = game["away"], game["home"], game["info"]
+        status_type = game.get("status", "scheduled").lower()
 
-        def team_score(side):
-            sc = side.get("score")
-            # Keep scheduled games at 0
-            if sc is None and state == "pre":
-                return "0"
-            return str(sc or 0)
+        # status pill
+        if status_type == "in":
+            pill_color, status_label = "#16a34a", "LIVE"
+        elif status_type == "post":
+            pill_color, status_label = "#dc2626", "FINAL"
+        else:
+            pill_color, status_label = "#2563eb", "Scheduled"
 
-        col1, col2, col3 = st.columns([3, 2, 3])
-
-        with col1:
-            st.markdown(
-                "<div style='background: linear-gradient(135deg, #013369, #d50a0a); "
-                "border-radius: 10px; padding: 10px; text-align:center;'>",
-                unsafe_allow_html=True
-            )
-            st.markdown(neon_text(away['team']['displayName'], away['team']['abbreviation'], 28), unsafe_allow_html=True)
-            if away['team'].get('logo'): st.image(away['team']['logo'], width=100)
-            st.markdown(f"<p style='font-size: 36px; margin: 10px 0;'>{team_score(away)}</p>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(
-                "<div style='text-align:center;'>"
-                f"<p><strong>{status_text}</strong></p>"
-                "</div>",
-                unsafe_allow_html=True
-            )
-
-        with col3:
-            st.markdown(
-                "<div style='background: linear-gradient(135deg, #d50a0a, #013369); "
-                "border-radius: 10px; padding: 10px; text-align:center;'>",
-                unsafe_allow_html=True
-            )
-            st.markdown(neon_text(home['team']['displayName'], home['team']['abbreviation'], 28), unsafe_allow_html=True)
-            if home['team'].get('logo'): st.image(home['team']['logo'], width=100)
-            st.markdown(f"<p style='font-size: 36px; margin: 10px 0;'>{team_score(home)}</p>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            text-align: center;
+        ">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="flex:1; text-align:center;">
+                    <img src="{away['team']['logo']}" width="80" />
+                    <div>{neon_text(away['team']['displayName'], away['team']['abbreviation'], 26)}</div>
+                    <div style="font-size:38px; font-weight:bold; color:white; text-shadow:0 0 6px black;">
+                        {away.get('score','0')}
+                    </div>
+                </div>
+                <div style="flex:0.5; text-align:center;">
+                    <span style="
+                        background:{pill_color};
+                        color:white;
+                        padding:6px 14px;
+                        border-radius:9999px;
+                        font-weight:bold;
+                    ">{status_label}</span>
+                    <div style="margin-top:8px; font-size:14px; color:#e5e7eb;">
+                        {info.get('quarter','')} {info.get('clock','')}
+                    </div>
+                </div>
+                <div style="flex:1; text-align:center;">
+                    <img src="{home['team']['logo']}" width="80" />
+                    <div>{neon_text(home['team']['displayName'], home['team']['abbreviation'], 26)}</div>
+                    <div style="font-size:38px; font-weight:bold; color:white; text-shadow:0 0 6px black;">
+                        {home.get('score','0')}
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
