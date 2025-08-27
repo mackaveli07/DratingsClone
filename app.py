@@ -362,3 +362,4 @@ with tabs[3]:
                     <p style='font-size: 36px; margin: 10px 0;'>{home.get('score', '0')}</p>
                 </div>
             """, unsafe_allow_html=True)
+
