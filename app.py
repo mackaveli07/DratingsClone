@@ -1,4 +1,3 @@
-# NFL Elo Projections App with Neon + Weather & Injuries + Improved Scoreboard
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -40,39 +39,18 @@ TEAM_COLORS = {
     "SEA": "#002244", "TB": "#D50A0A", "TEN": "#0C2340", "WAS": "#5A1414"
 }
 
-# Common typo corrections so ratings lookups never KeyError
-TEAM_NAME_FIXES = {
-    "Clevland Browns": "Cleveland Browns",
-    "NY Jets": "New York Jets",
-    "NY Giants": "New York Giants",
-    "Jags": "Jacksonville Jaguars",
-}
-
 ### ---------- HELPERS ----------
 def map_team_name(name):
-    if not name:
-        return "Unknown"
+    if not name: return "Unknown"
     name = str(name).strip()
-
-    # fix common typos
-    if name in TEAM_NAME_FIXES:
-        name = TEAM_NAME_FIXES[name]
-
-    # abbreviation → full
-    if name.upper() in NFL_FULL_NAMES:
-        return NFL_FULL_NAMES[name.upper()]
-
-    # full (case-insensitive) → full
+    if name.upper() in NFL_FULL_NAMES: return NFL_FULL_NAMES[name.upper()]
     for full in NFL_FULL_NAMES.values():
-        if name.lower() == full.lower():
-            return full
-
-    return name  # passthrough (won't crash due to safe .get on ratings)
+        if name.lower() == full.lower(): return full
+    return name
 
 def get_abbr(team_full):
     for abbr, full in NFL_FULL_NAMES.items():
-        if full == team_full:
-            return abbr
+        if full == team_full: return abbr
     return None
 
 def safe_logo(abbr, width=64):
@@ -108,15 +86,13 @@ def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
 def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
-    for t in list(elo_ratings.keys()):
+    for t in elo_ratings:
         elo_ratings[t] = base + reg * (elo_ratings[t] - base)
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
-    if home_team == team1:
-        r1 += HOME_ADVANTAGE
-    elif home_team == team2:
-        r2 += HOME_ADVANTAGE
+    if home_team == team1: r1 += HOME_ADVANTAGE
+    elif home_team == team2: r2 += HOME_ADVANTAGE
     expected1 = expected_score(r1, r2)
     actual1 = 1 if score1 > score2 else 0
     margin = abs(score1 - score2) or 1
@@ -129,109 +105,60 @@ def run_elo_pipeline(df):
     if {"season","week"} <= set(df.columns):
         df = df.sort_values(["season","week"])
         for i, s in enumerate(df["season"].dropna().unique()):
-            if i > 0:
-                regress_preseason(elo_ratings)
+            if i > 0: regress_preseason(elo_ratings)
             for _, row in df[df["season"]==s].iterrows():
-                t1 = map_team_name(row.get("team1"))
-                t2 = map_team_name(row.get("team2"))
-                home = map_team_name(row.get("home_team", t2))
-                update_ratings(
-                    elo_ratings,
-                    t1, t2,
-                    row.get("score1", 0) or 0,
-                    row.get("score2", 0) or 0,
-                    home
-                )
+                t1, t2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
+                update_ratings(elo_ratings, t1, t2, int(row.get("score1",0) or 0), int(row.get("score2",0) or 0), map_team_name(row.get("home_team",t2)))
     return dict(elo_ratings)
 
 # ---------- SCOREBOARD HELPERS ----------
-def _parse_utc_iso(ts: str):
-    if not ts:
-        return None
-    try:
-        if ts.endswith("Z"):
-            ts = ts.replace("Z", "+00:00")
-        return datetime.datetime.fromisoformat(ts)
-    except Exception:
-        return None
-
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=5)
 def fetch_nfl_scores():
-    """
-    Returns a list of games for the current week from ESPN:
-    Each item: {"away": {...}, "home": {...}, "state": "in|post|pre", "status": "text"}
-    status:
-      - LIVE: "Qx mm:ss"
-      - POST: "Final"
-      - PRE:  "Scheduled Sun 1:00 PM"
-    """
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
     try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
+        resp = requests.get(url, timeout=6)
     except Exception:
         return []
-
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
     games = []
-    et = pytz.timezone("US/Eastern")
-
+    today = datetime.date.today().isoformat()
     for event in data.get("events", []):
+        if event.get("date", "").split("T")[0] != today:
+            continue
         comp = event.get("competitions", [{}])[0]
         competitors = comp.get("competitors", [])
         if len(competitors) < 2:
             continue
-
         away = next((t for t in competitors if t.get("homeAway") == "away"), None)
         home = next((t for t in competitors if t.get("homeAway") == "home"), None)
         if not away or not home:
             continue
-
         status = comp.get("status", {})
-        stype = status.get("type", {})
-        state = stype.get("state", "")  # "pre" | "in" | "post"
-
-        if state == "in":
-            game_status = f"Q{status.get('period', '')} {status.get('displayClock', '')}"
-        elif state == "post":
-            game_status = "Final"
-        else:
-            # Scheduled: format start time nicely in ET
-            dt_utc = _parse_utc_iso(event.get("date", ""))
-            if dt_utc and dt_utc.tzinfo is not None:
-                dt_local = dt_utc.astimezone(et)
-                game_status = dt_local.strftime("Scheduled %a %-I:%M %p")
-            else:
-                # fallback to date only
-                game_status = "Scheduled"
-
-        games.append({
-            "away": away,
-            "home": home,
-            "state": state,
-            "status": game_status
-        })
-
+        situation = comp.get("situation", {})
+        info = {
+            "quarter": f"Q{status.get('period', 'N/A')}",
+            "clock": status.get("displayClock", ""),
+            "possession": situation.get("possession", {}).get("displayName", ""),
+            "shortDetail": status.get("type", {}).get("shortDetail", "")
+        }
+        games.append({"away": away, "home": home, "info": info})
     return games
 
 ### ---------- INJURIES ----------
-ESPN_TEAM_IDS = {
-    "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
-    "HOU":34,"IND":11,"JAX":30,"KC":12,"LV":13,"LAC":24,"LA":14,"MIA":15,"MIN":16,"NE":17,"NO":18,"NYG":19,"NYJ":20,"PHI":21,
-    "PIT":23,"SF":25,"SEA":26,"TB":27,"TEN":10,"WAS":28
-}
+ESPN_TEAM_IDS = { "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
+"HOU":34,"IND":11,"JAX":30,"KC":12,"LV":13,"LAC":24,"LA":14,"MIA":15,"MIN":16,"NE":17,"NO":18,"NYG":19,"NYJ":20,"PHI":21,
+"PIT":23,"SF":25,"SEA":26,"TB":27,"TEN":10,"WAS":28 }
 
 def fetch_injuries_espn(team_abbr):
     team_id = ESPN_TEAM_IDS.get(team_abbr)
-    if not team_id:
-        return []
+    if not team_id: return []
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
     try:
         r = requests.get(url, timeout=6); r.raise_for_status()
         data = r.json()
-    except Exception:
-        return []
+    except Exception: return []
     players = []
     for e in data.get("entries", []):
         players.append({
@@ -242,78 +169,49 @@ def fetch_injuries_espn(team_abbr):
     return players
 
 def injury_adjustment(players):
-    penalty = 0
+    penalty=0
     for p in players:
-        s = (p.get("status") or "").lower()
-        pos = (p.get("position") or "").upper()
-        if pos == "QB" and s in ["out", "doubtful"]:
-            penalty -= 50
-        elif pos in ["RB","WR","TE"] and s in ["out","doubtful"]:
-            penalty -= 15
-        elif s in ["out","doubtful"]:
-            penalty -= 10
+        s=(p.get("status") or "").lower(); pos=(p.get("position") or "").upper()
+        if pos=="QB" and s in ["out","doubtful"]: penalty-=50
+        elif pos in ["RB","WR","TE"] and s in ["out","doubtful"]: penalty-=15
+        elif s in ["out","doubtful"]: penalty-=10
     return penalty
 
 ### ---------- WEATHER ----------
-STADIUMS = {
-    "Buffalo Bills":{"lat":42.7738,"lon":-78.7868},
-    "Green Bay Packers":{"lat":44.5013,"lon":-88.0622},
-    "Chicago Bears":{"lat":41.8625,"lon":-87.6166},
-    "Kansas City Chiefs":{"lat":39.0490,"lon":-94.4840},
-    "New England Patriots":{"lat":42.0909,"lon":-71.2643},
-    "Philadelphia Eagles":{"lat":39.9008,"lon":-75.1675}
-    # Add more as needed
-}
+STADIUMS={"Buffalo Bills":{"lat":42.7738,"lon":-78.7868},"Green Bay Packers":{"lat":44.5013,"lon":-88.0622},
+"Chicago Bears":{"lat":41.8625,"lon":-87.6166},"Kansas City Chiefs":{"lat":39.0490,"lon":-94.4840},
+"New England Patriots":{"lat":42.0909,"lon":-71.2643},"Philadelphia Eagles":{"lat":39.9008,"lon":-75.1675}}
 
-OWM_API_KEY = os.getenv("OWM_API_KEY", "")
+OWM_API_KEY = os.getenv("OWM_API_KEY","")
 
-def get_weather(team, kickoff_unix):
-    if team not in STADIUMS or not OWM_API_KEY:
-        return None
-    lat, lon = STADIUMS[team]["lat"], STADIUMS[team]["lon"]
-    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=imperial"
+def get_weather(team,kickoff_unix):
+    if team not in STADIUMS or not OWM_API_KEY: return None
+    lat,lon=STADIUMS[team]["lat"],STADIUMS[team]["lon"]
+    url=f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=imperial"
     try:
-        resp = requests.get(url, timeout=6); resp.raise_for_status(); data = resp.json()
-    except Exception:
-        return None
-    forecasts = data.get("list", [])
-    if not forecasts:
-        return None
-    closest = min(forecasts, key=lambda x: abs(int(x.get("dt",0)) - int(kickoff_unix)))
-    dt_diff = abs(int(closest.get("dt",0)) - int(kickoff_unix))
-    if dt_diff > 432000:  # > 5 days off → too uncertain
-        return None
-    try:
-        return {
-            "temp": closest["main"]["temp"],
-            "wind_speed": closest["wind"]["speed"],
-            "condition": closest["weather"][0]["main"]
-        }
-    except Exception:
-        return None
+        resp=requests.get(url,timeout=6); resp.raise_for_status(); data=resp.json()
+    except Exception: return None
+    forecasts=data.get("list",[])
+    if not forecasts: return None
+    closest=min(forecasts,key=lambda x:abs(int(x.get("dt",0))-int(kickoff_unix)))
+    dt_diff=abs(int(closest.get("dt",0))-int(kickoff_unix))
+    if dt_diff>432000: return None
+    return {"temp":closest["main"]["temp"],"wind_speed":closest["wind"]["speed"],"condition":closest["weather"][0]["main"]}
 
 def weather_adjustment(weather):
-    if not weather:
-        return 0
-    pen = 0
-    try:
-        if weather.get("wind_speed", 0) > 20: pen -= 2
-        if (weather.get("condition","").lower()) in ["rain","snow"]: pen -= 3
-        if weather.get("temp", 100) < 25: pen -= 1
-    except Exception:
-        return 0
+    pen=0
+    if weather["wind_speed"]>20: pen-=2
+    if (weather.get("condition") or "").lower() in ["rain","snow"]: pen-=3
+    if weather["temp"]<25: pen-=1
     return pen
 
 def default_kickoff_unix(game_date):
-    if isinstance(game_date, str):
-        try:
-            game_date = datetime.datetime.strptime(game_date, "%Y-%m-%d")
-        except Exception:
-            return 0
-    elif not isinstance(game_date, datetime.datetime):
-        return 0
-    est = pytz.timezone("US/Eastern")
-    kickoff = est.localize(datetime.datetime(game_date.year, game_date.month, game_date.day, 13, 0, 0))
+    if isinstance(game_date,str):
+        try: game_date=datetime.datetime.strptime(game_date,"%Y-%m-%d")
+        except: return 0
+    elif not isinstance(game_date,datetime.datetime): return 0
+    est=pytz.timezone("US/Eastern")
+    kickoff=est.localize(datetime.datetime(game_date.year,game_date.month,game_date.day,13,0,0))
     return int(kickoff.timestamp())
 
 ### ---------- NFL THEMED HEADERS ----------
@@ -356,159 +254,204 @@ def nfl_subheader(text, icon="📊"):
     )
 
 ### ---------- MAIN ----------
-st.set_page_config(page_title="NFL Elo Projections", layout="wide")
+st.set_page_config(page_title="NFL Elo Projections",layout="wide")
 nfl_header("NFL Elo Projections")
 
-# Load data
 try:
-    hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
-    sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
+    hist_df=pd.read_excel(EXCEL_FILE,sheet_name=HIST_SHEET)
+    sched_df=pd.read_excel(EXCEL_FILE,sheet_name=SCHEDULE_SHEET)
 except Exception as e:
-    st.error(f"Error loading Excel: {e}")
-    st.stop()
+    st.error(f"Error loading Excel: {e}"); st.stop()
 
-ratings = run_elo_pipeline(hist_df)
-HOME_COL, AWAY_COL = "team2", "team1"
+NFL_AVG_TOTALS={}; overall_avg=44; alpha=50
+if {"score1","score2","season"} <= set(hist_df.columns):
+    hist_df["total_points"]=hist_df["score1"].fillna(0)+hist_df["score2"].fillna(0)
+    overall_avg=float(hist_df["total_points"].mean()) if len(hist_df) else 44.0
+    grouped=hist_df.groupby("season")["total_points"].agg(["mean","count"]).reset_index()
+    for _,r in grouped.iterrows():
+        s_val=int(r["season"]) if pd.notnull(r["season"]) else -1
+        NFL_AVG_TOTALS[s_val]=((float(r["mean"])*float(r["count"]))+overall_avg*alpha)/(float(r["count"]) + alpha)
 
-tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard"])
+ratings=run_elo_pipeline(hist_df)
+HOME_COL,AWAY_COL="team2","team1"
+
+tabs=st.tabs(["Matchups","Power Rankings","Pick Winners","Scoreboard"])
 
 # --- Matchups Tab ---
 with tabs[0]:
-    # safe week handling
-    week_series_num = pd.to_numeric(sched_df["week"], errors="coerce")
-    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
-    if not available_weeks:
-        st.warning("No valid weeks found in schedule.")
-    selected_week = st.selectbox(
-        "Select Week",
-        options=available_weeks,
-        index=max(0, len(available_weeks)-1),
-        key="week_matchups"
+    available_weeks = (
+        pd.to_numeric(sched_df['week'], errors="coerce").dropna().astype(int).unique().tolist()
     )
-    # filter using numeric week
-    week_games = sched_df.loc[week_series_num.astype("Int64") == selected_week]
+    available_weeks = sorted(set(available_weeks))
+    selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_matchups")
+    week_games = sched_df[sched_df['week'].astype(str) == str(selected_week)]
 
     for _, row in week_games.iterrows():
-        team_home = map_team_name(row.get(HOME_COL))
-        team_away = map_team_name(row.get(AWAY_COL))
+        team_home, team_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
         abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
 
-        # fetch injuries & weather
-        home_inj = fetch_injuries_espn(abbr_home) if abbr_home else []
-        away_inj = fetch_injuries_espn(abbr_away) if abbr_away else []
-        kickoff = default_kickoff_unix(row.get("date"))
-        weather = get_weather(team_home, kickoff)
+        # Base Elos
+        elo_home = ratings.get(team_home, BASE_ELO)
+        elo_away = ratings.get(team_away, BASE_ELO)
 
-        # SILENT adjustments (injuries + weather for both teams)
-        adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj) + weather_adjustment(weather)
-        adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj) + weather_adjustment(weather)
+        # Injuries
+        inj_home = fetch_injuries_espn(abbr_home)
+        inj_away = fetch_injuries_espn(abbr_away)
+        inj_adj_home = injury_adjustment(inj_home)
+        inj_adj_away = injury_adjustment(inj_away)
 
-        # Include home advantage in projection
-        win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
-        win_prob_away = 1 - win_prob_home
+        # Weather (applies to BOTH teams equally)
+        kickoff_unix = default_kickoff_unix(row.get('date')) if 'date' in sched_df.columns else 0
+        weather = get_weather(team_home, kickoff_unix) if kickoff_unix else None
+        wx_adj = weather_adjustment(weather) if weather else 0
 
-        st.markdown(
-            "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
-            "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
-            unsafe_allow_html=True
-        )
+        # Adjusted ratings used silently for projections
+        adj_home = elo_home + inj_adj_home + wx_adj
+        adj_away = elo_away + inj_adj_away + wx_adj
+
+        # Win probability using adjusted ratings + home advantage applied to home team
+        prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
+        prob_away = 1 - prob_home
+
+        st.markdown("<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>", unsafe_allow_html=True)
 
         col1, col_mid, col2 = st.columns([2, 3, 2])
         with col1:
-            safe_logo(abbr_away, 120)
+            safe_logo(abbr_away, 110)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
         with col_mid:
-            st.markdown("<h1 style='text-align:center; margin:0;'>vs</h1>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div style='text-align:center'>
+                    <div style='font-size:34px; margin-top:6px'>@</div>
+                    <div style='margin-top:8px; font-size:16px;'>Home Win Prob: <strong>{prob_home*100:0.1f}%</strong></div>
+                    <div style='font-size:14px; opacity:.85'>Away Win Prob: {prob_away*100:0.1f}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         with col2:
-            safe_logo(abbr_home, 120)
+            safe_logo(abbr_home, 110)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
 
+        # --- Expanders ---
         with st.expander("Weather Forecast 🌤️"):
             if weather:
-                st.write(weather)
+                st.write(f"**Condition:** {weather['condition']}  |  **Temp:** {weather['temp']}°F  |  **Wind:** {weather['wind_speed']} mph")
+                st.caption("Weather penalty applied to both teams in projection.")
             else:
-                st.info("No forecast available.")
+                st.write("No forecast available.")
 
         with st.expander("Injuries 🩺"):
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown(f"**{team_away} Injuries**")
-                if away_inj:
-                    for p in away_inj:
-                        st.write(p)
+                st.write(neon_text(team_away, abbr_away, 20), unsafe_allow_html=True)
+                if inj_away:
+                    df = pd.DataFrame(inj_away)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
                 else:
-                    st.caption("No reported injuries.")
+                    st.write("No listed injuries.")
             with c2:
-                st.markdown(f"**{team_home} Injuries**")
-                if home_inj:
-                    for p in home_inj:
-                        st.write(p)
+                st.write(neon_text(team_home, abbr_home, 20), unsafe_allow_html=True)
+                if inj_home:
+                    df = pd.DataFrame(inj_home)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
                 else:
-                    st.caption("No reported injuries.")
+                    st.write("No listed injuries.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Power Rankings Tab ---
 with tabs[1]:
-    nfl_subheader("Elo Power Rankings", "📊")
-    pr_df = pd.DataFrame(sorted(ratings.items(), key=lambda x: x[1], reverse=True), columns=["Team", "Elo"])
-    st.dataframe(pr_df, use_container_width=True)
+    nfl_subheader("Power Rankings (Elo)")
+    if ratings:
+        pr = (
+            pd.DataFrame({"team": list(ratings.keys()), "elo": list(ratings.values())})
+            .sort_values("elo", ascending=False)
+            .reset_index(drop=True)
+        )
+        pr.index = pr.index + 1
+        pr["abbr"] = pr["team"].apply(get_abbr)
+        pr = pr[["abbr", "team", "elo"]]
+        st.dataframe(pr.style.format({"elo": "{:.0f}"}), use_container_width=True, hide_index=True)
+    else:
+        st.info("No rating data available.")
 
 # --- Pick Winners Tab ---
 with tabs[2]:
     nfl_subheader("Weekly Pick’em", "📝")
-    week_series_num = pd.to_numeric(sched_df["week"], errors="coerce")
-    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
+    available_weeks = (
+        pd.to_numeric(sched_df['week'], errors="coerce").dropna().astype(int).unique().tolist()
+    )
+    available_weeks = sorted(set(available_weeks))
     week = st.selectbox("Select Week", available_weeks, key="week_picks")
-    games = sched_df.loc[week_series_num.astype("Int64") == week]
+    games = sched_df[sched_df['week'].astype(str) == str(week)]
     picks = {}
-    for _, row in games.iterrows():
-        t_home, t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
-        abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
-        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([3, 2, 3])
+    for _,row in games.iterrows():
+        t_home,t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
+        abbr_home,abbr_away = get_abbr(t_home), get_abbr(t_away)
+        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>",unsafe_allow_html=True)
+        c1,c2,c3 = st.columns([3,2,3])
         with c1:
-            safe_logo(abbr_away, 80)
-            st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
+            safe_logo(abbr_away,80)
+            st.markdown(neon_text(t_away, abbr_away, 20),unsafe_allow_html=True)
         with c2:
-            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
+            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
         with c3:
-            safe_logo(abbr_home, 80)
-            st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
-        choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
+            safe_logo(abbr_home,80)
+            st.markdown(neon_text(t_home, abbr_home, 20),unsafe_allow_html=True)
+        choice = st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{abbr_away}_at_{abbr_home}")
         picks[f"{t_away} @ {t_home}"] = choice
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>",unsafe_allow_html=True)
 
 # --- Scoreboard Tab ---
 with tabs[3]:
-    nfl_subheader("NFL Scoreboard", "🏟️")
+    nfl_subheader("Live NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
     if not games:
-        st.info("No games found for the current week.")
+        st.info("No NFL games today or unable to fetch the live scoreboard.")
     for game in games:
-        away, home, state, status_text = game["away"], game["home"], game["state"], game["status"]
+        away, home, info = game["away"], game["home"], game["info"]
+        a_abbr = away.get("team", {}).get("abbreviation", "")
+        h_abbr = home.get("team", {}).get("abbreviation", "")
+        a_name = away.get("team", {}).get("displayName", a_abbr)
+        h_name = home.get("team", {}).get("displayName", h_abbr)
+        a_logo = away.get("team", {}).get("logo") or away.get("team", {}).get("logos", [{}])[0].get("href")
+        h_logo = home.get("team", {}).get("logo") or home.get("team", {}).get("logos", [{}])[0].get("href")
+        a_score = away.get("score", "0")
+        h_score = home.get("score", "0")
+
         col1, col2, col3 = st.columns([3, 2, 3])
         with col1:
-            st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 10px; padding: 10px; text-align:center;'>
-                    {neon_text(away['team']['displayName'], away['team']['abbreviation'], 28)}
-                    <img src="{away['team'].get('logo','')}" width="100" />
-                    <p style='font-size: 36px; margin: 10px 0;'>{away.get('score', '-' if state=='pre' else '0')}</p>
+            st.markdown(
+                f"""
+                <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 12px; padding: 12px; text-align:center;'>
+                    {neon_text(a_name, a_abbr, 26)}
+                    {f"<img src='{a_logo}' width='96'/>" if a_logo else ''}
+                    <p style='font-size: 36px; margin: 10px 0; color:white'>{a_score}</p>
                 </div>
-            """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
         with col2:
-            st.markdown(f"""
+            st.markdown(
+                f"""
                 <div style='text-align:center;'>
-                    <p><strong>{status_text}</strong></p>
+                    <p><strong>{info.get('shortDetail') or (info.get('quarter') + ' ' + info.get('clock'))}</strong></p>
+                    <p>Possession: {info.get('possession') or '-'}</p>
                 </div>
-            """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
         with col3:
-            st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 10px; padding: 10px; text-align:center;'>
-                    {neon_text(home['team']['displayName'], home['team']['abbreviation'], 28)}
-                    <img src="{home['team'].get('logo','')}" width="100" />
-                    <p style='font-size: 36px; margin: 10px 0;'>{home.get('score', '-' if state=='pre' else '0')}</p>
+            st.markdown(
+                f"""
+                <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 12px; padding: 12px; text-align:center;'>
+                    {neon_text(h_name, h_abbr, 26)}
+                    {f"<img src='{h_logo}' width='96'/>" if h_logo else ''}
+                    <p style='font-size: 36px; margin: 10px 0; color:white'>{h_score}</p>
                 </div>
-            """, unsafe_allow_html=True)
+                """,
+                unsafe_allow_html=True,
+            )
+
