@@ -108,14 +108,17 @@ def run_elo_pipeline(df):
             if i > 0: regress_preseason(elo_ratings)
             for _, row in df[df["season"]==s].iterrows():
                 t1, t2 = map_team_name(row.get("team1")), map_team_name(row.get("team2"))
-                update_ratings(elo_ratings, t1, t2, row.get("score1",0), row.get("score2",0), map_team_name(row.get("home_team",t2)))
+                update_ratings(elo_ratings, t1, t2, int(row.get("score1",0) or 0), int(row.get("score2",0) or 0), map_team_name(row.get("home_team",t2)))
     return dict(elo_ratings)
 
 # ---------- SCOREBOARD HELPERS ----------
 @st.cache_data(ttl=5)
 def fetch_nfl_scores():
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-    resp = requests.get(url)
+    try:
+        resp = requests.get(url, timeout=6)
+    except Exception:
+        return []
     if resp.status_code != 200:
         return []
     data = resp.json()
@@ -128,8 +131,8 @@ def fetch_nfl_scores():
         competitors = comp.get("competitors", [])
         if len(competitors) < 2:
             continue
-        away = next((t for t in competitors if t["homeAway"] == "away"), None)
-        home = next((t for t in competitors if t["homeAway"] == "home"), None)
+        away = next((t for t in competitors if t.get("homeAway") == "away"), None)
+        home = next((t for t in competitors if t.get("homeAway") == "home"), None)
         if not away or not home:
             continue
         status = comp.get("status", {})
@@ -137,13 +140,10 @@ def fetch_nfl_scores():
         info = {
             "quarter": f"Q{status.get('period', 'N/A')}",
             "clock": status.get("displayClock", ""),
-            "possession": situation.get("possession", {}).get("displayName", "")
+            "possession": situation.get("possession", {}).get("displayName", ""),
+            "shortDetail": status.get("type", {}).get("shortDetail", "")
         }
-        games.append({
-            "away": away,
-            "home": home,
-            "info": info
-        })
+        games.append({"away": away, "home": home, "info": info})
     return games
 
 ### ---------- INJURIES ----------
@@ -156,7 +156,7 @@ def fetch_injuries_espn(team_abbr):
     if not team_id: return []
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
     try:
-        r = requests.get(url, timeout=5); r.raise_for_status()
+        r = requests.get(url, timeout=6); r.raise_for_status()
         data = r.json()
     except Exception: return []
     players = []
@@ -191,7 +191,7 @@ def get_weather(team,kickoff_unix):
     try:
         resp=requests.get(url,timeout=6); resp.raise_for_status(); data=resp.json()
     except Exception: return None
-    forecasts=data.get("list",[]); 
+    forecasts=data.get("list",[])
     if not forecasts: return None
     closest=min(forecasts,key=lambda x:abs(int(x.get("dt",0))-int(kickoff_unix)))
     dt_diff=abs(int(closest.get("dt",0))-int(kickoff_unix))
@@ -201,7 +201,7 @@ def get_weather(team,kickoff_unix):
 def weather_adjustment(weather):
     pen=0
     if weather["wind_speed"]>20: pen-=2
-    if weather["condition"].lower() in ["rain","snow"]: pen-=3
+    if (weather.get("condition") or "").lower() in ["rain","snow"]: pen-=3
     if weather["temp"]<25: pen-=1
     return pen
 
@@ -265,11 +265,12 @@ except Exception as e:
 
 NFL_AVG_TOTALS={}; overall_avg=44; alpha=50
 if {"score1","score2","season"} <= set(hist_df.columns):
-    hist_df["total_points"]=hist_df["score1"]+hist_df["score2"]
-    overall_avg=hist_df["total_points"].mean()
-    grouped=hist_df.groupby("season")["total_points"].agg(["mean","count"])
-    for s,r in grouped.iterrows():
-        NFL_AVG_TOTALS[s]=(r["mean"]*r["count"]+overall_avg*alpha)/(r["count"]+alpha)
+    hist_df["total_points"]=hist_df["score1"].fillna(0)+hist_df["score2"].fillna(0)
+    overall_avg=float(hist_df["total_points"].mean()) if len(hist_df) else 44.0
+    grouped=hist_df.groupby("season")["total_points"].agg(["mean","count"]).reset_index()
+    for _,r in grouped.iterrows():
+        s_val=int(r["season"]) if pd.notnull(r["season"]) else -1
+        NFL_AVG_TOTALS[s_val]=((float(r["mean"])*float(r["count"]))+overall_avg*alpha)/(float(r["count"]) + alpha)
 
 ratings=run_elo_pipeline(hist_df)
 HOME_COL,AWAY_COL="team2","team1"
@@ -279,55 +280,128 @@ tabs=st.tabs(["Matchups","Power Rankings","Pick Winners","Scoreboard"])
 # --- Matchups Tab ---
 with tabs[0]:
     available_weeks = (
-        pd.to_numeric(sched_df['week'], errors="coerce")
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
+        pd.to_numeric(sched_df['week'], errors="coerce").dropna().astype(int).unique().tolist()
     )
     available_weeks = sorted(set(available_weeks))
     selected_week = st.selectbox("Select Week", available_weeks, index=max(0, len(available_weeks)-1), key="week_matchups")
-    week_games = sched_df[sched_df['week'] == selected_week]
+    week_games = sched_df[sched_df['week'].astype(str) == str(selected_week)]
 
     for _, row in week_games.iterrows():
-        team_home, team_away = map_team_name(row[HOME_COL]), map_team_name(row[AWAY_COL])
+        team_home, team_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
+        abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
+
+        # Base Elos
+        elo_home = ratings.get(team_home, BASE_ELO)
+        elo_away = ratings.get(team_away, BASE_ELO)
+
+        # Injuries
+        inj_home = fetch_injuries_espn(abbr_home)
+        inj_away = fetch_injuries_espn(abbr_away)
+        inj_adj_home = injury_adjustment(inj_home)
+        inj_adj_away = injury_adjustment(inj_away)
+
+        # Weather (applies to BOTH teams equally)
+        kickoff_unix = default_kickoff_unix(row.get('date')) if 'date' in sched_df.columns else 0
+        weather = get_weather(team_home, kickoff_unix) if kickoff_unix else None
+        wx_adj = weather_adjustment(weather) if weather else 0
+
+        # Adjusted ratings used silently for projections
+        adj_home = elo_home + inj_adj_home + wx_adj
+        adj_away = elo_away + inj_adj_away + wx_adj
+
+        # Win probability using adjusted ratings + home advantage applied to home team
+        prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
+        prob_away = 1 - prob_home
 
         st.markdown("<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>", unsafe_allow_html=True)
 
         col1, col_mid, col2 = st.columns([2, 3, 2])
         with col1:
-            safe_logo(get_abbr(team_away), 120)
-            st.markdown(f"<div style='text-align:center'>{neon_text(team_away, get_abbr(team_away), 28)}</div>", unsafe_allow_html=True)
+            safe_logo(abbr_away, 110)
+            st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
         with col_mid:
-            st.markdown(f"<h1 style='text-align:center; margin:0;'>{'--'} – {'--'}</h1>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div style='text-align:center'>
+                    <div style='font-size:34px; margin-top:6px'>@</div>
+                    <div style='margin-top:8px; font-size:16px;'>Home Win Prob: <strong>{prob_home*100:0.1f}%</strong></div>
+                    <div style='font-size:14px; opacity:.85'>Away Win Prob: {prob_away*100:0.1f}%</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         with col2:
-            safe_logo(get_abbr(team_home), 120)
-            st.markdown(f"<div style='text-align:center'>{neon_text(team_home, get_abbr(team_home), 28)}</div>", unsafe_allow_html=True)
+            safe_logo(abbr_home, 110)
+            st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
+
+        # --- Expanders ---
+        with st.expander("Weather Forecast 🌤️"):
+            if weather:
+                st.write(f"**Condition:** {weather['condition']}  |  **Temp:** {weather['temp']}°F  |  **Wind:** {weather['wind_speed']} mph")
+                st.caption("Weather penalty applied to both teams in projection.")
+            else:
+                st.write("No forecast available.")
+
+        with st.expander("Injuries 🩺"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(neon_text(team_away, abbr_away, 20), unsafe_allow_html=True)
+                if inj_away:
+                    df = pd.DataFrame(inj_away)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    st.write("No listed injuries.")
+            with c2:
+                st.write(neon_text(team_home, abbr_home, 20), unsafe_allow_html=True)
+                if inj_home:
+                    df = pd.DataFrame(inj_home)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                else:
+                    st.write("No listed injuries.")
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+# --- Power Rankings Tab ---
+with tabs[1]:
+    nfl_subheader("Power Rankings (Elo)")
+    if ratings:
+        pr = (
+            pd.DataFrame({"team": list(ratings.keys()), "elo": list(ratings.values())})
+            .sort_values("elo", ascending=False)
+            .reset_index(drop=True)
+        )
+        pr.index = pr.index + 1
+        pr["abbr"] = pr["team"].apply(get_abbr)
+        pr = pr[["abbr", "team", "elo"]]
+        st.dataframe(pr.style.format({"elo": "{:.0f}"}), use_container_width=True, hide_index=True)
+    else:
+        st.info("No rating data available.")
 
 # --- Pick Winners Tab ---
 with tabs[2]:
     nfl_subheader("Weekly Pick’em", "📝")
     available_weeks = (
-        pd.to_numeric(sched_df['week'], errors="coerce")
-        .dropna()
-        .astype(int)
-        .unique()
-        .tolist()
+        pd.to_numeric(sched_df['week'], errors="coerce").dropna().astype(int).unique().tolist()
     )
     available_weeks = sorted(set(available_weeks))
-    week=st.selectbox("Select Week", available_weeks, key="week_picks")
-    games=sched_df[sched_df['week']==week]; picks={}
+    week = st.selectbox("Select Week", available_weeks, key="week_picks")
+    games = sched_df[sched_df['week'].astype(str) == str(week)]
+    picks = {}
     for _,row in games.iterrows():
-        t_home,t_away=map_team_name(row[HOME_COL]),map_team_name(row[AWAY_COL])
-        abbr_home,abbr_away=get_abbr(t_home),get_abbr(t_away)
+        t_home,t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
+        abbr_home,abbr_away = get_abbr(t_home), get_abbr(t_away)
         st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>",unsafe_allow_html=True)
-        c1,c2,c3=st.columns([3,2,3])
-        with c1: safe_logo(abbr_away,80); st.markdown(neon_text(t_away, abbr_away, 20),unsafe_allow_html=True)
-        with c2: st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
-        with c3: safe_logo(abbr_home,80); st.markdown(neon_text(t_home, abbr_home, 20),unsafe_allow_html=True)
-        choice=st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{t_home}_{t_away}"); picks[f"{t_away} @ {t_home}"]=choice
+        c1,c2,c3 = st.columns([3,2,3])
+        with c1:
+            safe_logo(abbr_away,80)
+            st.markdown(neon_text(t_away, abbr_away, 20),unsafe_allow_html=True)
+        with c2:
+            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>",unsafe_allow_html=True)
+        with c3:
+            safe_logo(abbr_home,80)
+            st.markdown(neon_text(t_home, abbr_home, 20),unsafe_allow_html=True)
+        choice = st.radio("",[t_away,t_home],horizontal=True,key=f"pick_{abbr_away}_at_{abbr_home}")
+        picks[f"{t_away} @ {t_home}"] = choice
         st.markdown("</div>",unsafe_allow_html=True)
 
 # --- Scoreboard Tab ---
@@ -335,31 +409,48 @@ with tabs[3]:
     nfl_subheader("Live NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
     if not games:
-        st.info("No NFL games today.")
+        st.info("No NFL games today or unable to fetch the live scoreboard.")
     for game in games:
         away, home, info = game["away"], game["home"], game["info"]
-        col1, col2, col3 = st.columns([3,2,3])
-        with col1:
-            st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 10px; padding: 10px; text-align:center;'>
-                    {neon_text(away['team']['displayName'], away['team']['abbreviation'], 28)}
-                    <img src="{away['team']['logo']}" width="100" />
-                    <p style='font-size: 36px; margin: 10px 0;'>{away.get('score', '0')}</p>
-                </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            st.markdown(f"""
-                <div style='text-align:center;'>
-                    <p><strong>{info['quarter']} {info['clock']}</strong></p>
-                    <p>🟢 Possession: {info['possession']}</p>
-                </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            st.markdown(f"""
-                <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 10px; padding: 10px; text-align:center;'>
-                    {neon_text(home['team']['displayName'], home['team']['abbreviation'], 28)}
-                    <img src="{home['team']['logo']}" width="100" />
-                    <p style='font-size: 36px; margin: 10px 0;'>{home.get('score', '0')}</p>
-                </div>
-            """, unsafe_allow_html=True)
+        a_abbr = away.get("team", {}).get("abbreviation", "")
+        h_abbr = home.get("team", {}).get("abbreviation", "")
+        a_name = away.get("team", {}).get("displayName", a_abbr)
+        h_name = home.get("team", {}).get("displayName", h_abbr)
+        a_logo = away.get("team", {}).get("logo") or away.get("team", {}).get("logos", [{}])[0].get("href")
+        h_logo = home.get("team", {}).get("logo") or home.get("team", {}).get("logos", [{}])[0].get("href")
+        a_score = away.get("score", "0")
+        h_score = home.get("score", "0")
 
+        col1, col2, col3 = st.columns([3, 2, 3])
+        with col1:
+            st.markdown(
+                f"""
+                <div style='background: linear-gradient(135deg, #013369, #d50a0a); border-radius: 12px; padding: 12px; text-align:center;'>
+                    {neon_text(a_name, a_abbr, 26)}
+                    {f"<img src='{a_logo}' width='96'/>" if a_logo else ''}
+                    <p style='font-size: 36px; margin: 10px 0; color:white'>{a_score}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with col2:
+            st.markdown(
+                f"""
+                <div style='text-align:center;'>
+                    <p><strong>{info.get('shortDetail') or (info.get('quarter') + ' ' + info.get('clock'))}</strong></p>
+                    <p>Possession: {info.get('possession') or '-'}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with col3:
+            st.markdown(
+                f"""
+                <div style='background: linear-gradient(135deg, #d50a0a, #013369); border-radius: 12px; padding: 12px; text-align:center;'>
+                    {neon_text(h_name, h_abbr, 26)}
+                    {f"<img src='{h_logo}' width='96'/>" if h_logo else ''}
+                    <p style='font-size: 36px; margin: 10px 0; color:white'>{h_score}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
