@@ -491,22 +491,24 @@ with tabs[2]:
 
 
 # --- Scoreboard Tab ---
+# --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
     for game in games:
-        away, home, info = game["away"], game["home"], game["info"]
-        status_type = game.get("status", "scheduled").lower()
+        away, home = game["away"], game["home"]
+        state = game.get("state", "pre")
+        status_text = game.get("status", "")
 
         # status pill
-        if status_type == "in":
+        if state == "in":
             pill_color, status_label = "#16a34a", "LIVE"
-        elif status_type == "post":
+        elif state == "post":
             pill_color, status_label = "#dc2626", "FINAL"
         else:
-            pill_color, status_label = "#2563eb", "Scheduled"
+            pill_color, status_label = "#2563eb", status_text  # includes kickoff time
 
         st.markdown(f"""
         <div style="
@@ -526,7 +528,7 @@ with tabs[3]:
                         {away.get('score','0')}
                     </div>
                 </div>
-                <div style="flex:0.5; text-align:center;">
+                <div style="flex:0.7; text-align:center;">
                     <span style="
                         background:{pill_color};
                         color:white;
@@ -534,9 +536,6 @@ with tabs[3]:
                         border-radius:9999px;
                         font-weight:bold;
                     ">{status_label}</span>
-                    <div style="margin-top:8px; font-size:14px; color:#e5e7eb;">
-                        {info.get('quarter','')} {info.get('clock','')}
-                    </div>
                 </div>
                 <div style="flex:1; text-align:center;">
                     <img src="{home['team']['logo']}" width="80" />
