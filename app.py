@@ -530,64 +530,57 @@ with tabs[2]:
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
 
-    # Inject shared CSS
-    st.markdown("""
-    <style>
-    .score-card {
-        background: rgba(255,255,255,0.08);
-        backdrop-filter: blur(12px);
-        border-radius: 20px;
-        padding: 20px;
-        margin: 20px 0;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.3);
-        text-align: center;
-    }
-    .team-block {
-        flex: 1;
-        text-align: center;
-    }
-    .team-score {
-        font-size: 40px;
-        font-weight: bold;
-        text-shadow: 0 0 6px black;
-    }
-    .live-pill {
-        background: #dc2626;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .final-pill {
-        background: #16a34a;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .scheduled-pill {
-        background: #2563eb;
-        color: white;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-weight: bold;
-    }
-    .info-box {
-        background: rgba(255,255,255,0.1);
-        border-radius: 12px;
-        padding: 6px 12px;
-        margin-top: 10px;
-        font-size: 14px;
-        font-style: italic;
-    }
-    .status-box {
-        text-align: center;
-        font-size: 16px;
-        margin-top: 6px;
-        color: #e5e7eb;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    # Inject shared CSS only once
+    if "scoreboard_css_loaded" not in st.session_state:
+        st.markdown("""
+        <style>
+        .score-card {
+            background: rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        .team-block { flex: 1; text-align: center; }
+        .team-score {
+            font-size: 40px;
+            font-weight: bold;
+            text-shadow: 0 0 6px black;
+        }
+        .live-pill {
+            background: #dc2626; color: white;
+            padding: 4px 12px; border-radius: 20px;
+            font-weight: bold;
+        }
+        .final-pill {
+            background: #16a34a; color: white;
+            padding: 4px 12px; border-radius: 20px;
+            font-weight: bold;
+        }
+        .scheduled-pill {
+            background: #2563eb; color: white;
+            padding: 4px 12px; border-radius: 20px;
+            font-weight: bold;
+        }
+        .info-box {
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 6px 12px;
+            margin-top: 10px;
+            font-size: 14px;
+            font-style: italic;
+        }
+        .status-box {
+            text-align: center;
+            font-size: 16px;
+            margin-top: 6px;
+            color: #e5e7eb;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        st.session_state["scoreboard_css_loaded"] = True
 
     games = fetch_nfl_scores()
     if not games:
@@ -602,26 +595,21 @@ with tabs[3]:
         possession_id = situation.get("possession", {}).get("id")
         last_play = situation.get("lastPlay", {}).get("text","")
         down = situation.get("down")
-        distance = situation.get("distance")
         yard_line = situation.get("yardLine")
         desc = situation.get("shortDownDistanceText")
 
-        # Build drive summary text
+        # Drive summary
         drive_summary = None
-        if down and distance:
+        if desc:
             drive_summary = f"{desc} on {yard_line or '??'}"
-        elif desc:
-            drive_summary = desc
 
-        # Game clock & quarter
+        # Clock + quarter
         status_obj = comp.get("status", {}) if comp else {}
         period = status_obj.get("period")
         clock = status_obj.get("displayClock", "")
-        clock_text = None
-        if state == "in" and period:
-            clock_text = f"Q{period} – {clock}"
+        clock_text = f"Q{period} – {clock}" if state == "in" and period else None
 
-        # Status pill
+        # Pill
         if state == "in":
             pill_html = "<span class='live-pill'>LIVE</span>"
         elif state == "post":
@@ -629,10 +617,11 @@ with tabs[3]:
         else:
             pill_html = f"<span class='scheduled-pill'>{status_text}</span>"
 
-        # Highlight winner if final
+        # Winner highlight
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
+        # Game card (NO raw CSS inside!)
         st.markdown(f"""
         <div class="score-card">
             <div style="display:flex; align-items:center; justify-content:space-between;">
