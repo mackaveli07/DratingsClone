@@ -541,7 +541,7 @@ with tabs[3]:
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
-    for game in games:
+        for game in games:
         away, home = game["away"], game["home"]
         state = game.get("state", "pre")
         status_text = game.get("status", "")
@@ -549,6 +549,7 @@ with tabs[3]:
         possession_team = game.get("possession", "")
         last_play = game.get("last_play", "")
 
+        # status pill
         if state == "in":
             pill_color, status_label = "#16a34a", "LIVE"
         elif state == "post":
@@ -556,32 +557,21 @@ with tabs[3]:
         else:
             pill_color, status_label = "#2563eb", status_text
 
-        away_abbr = away['team']['abbreviation']
-        home_abbr = home['team']['abbreviation']
-        away_color = TEAM_COLORS.get(away_abbr, "#9ca3af")
-        home_color = TEAM_COLORS.get(home_abbr, "#9ca3af")
+        away_abbr, home_abbr = away["team"]["abbreviation"], home["team"]["abbreviation"]
+        away_color, home_color = TEAM_COLORS.get(away_abbr, "#9ca3af"), TEAM_COLORS.get(home_abbr, "#9ca3af")
 
         away_score, home_score = int(away.get("score", "0")), int(home.get("score", "0"))
-        winner_abbr = None
-        if state == "post":
-            if away_score > home_score:
-                winner_abbr = away_abbr
-            elif home_score > away_score:
-                winner_abbr = home_abbr
 
-        # build HTML safely
-        away_possession = (
-            "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>"
-            if possession_team == away['team']['displayName'] else ""
-        )
-        home_possession = (
-            "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>"
-            if possession_team == home['team']['displayName'] else ""
-        )
-        drive_html = f"""
-        <div style="margin-top:12px; font-size:14px; color:#d1d5db; font-style:italic;">
-            {last_play}
-        </div>""" if last_play else ""
+        # winner glow styles
+        away_glow = f"box-shadow:0 0 12px {away_color};" if state == "post" and away_score > home_score else ""
+        home_glow = f"box-shadow:0 0 12px {home_color};" if state == "post" and home_score > away_score else ""
+
+        # possession icons
+        away_possession = "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == away["team"]["displayName"] else ""
+        home_possession = "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == home["team"]["displayName"] else ""
+
+        # drive summary
+        drive_html = f"<div style='margin-top:12px; font-size:14px; color:#d1d5db; font-style:italic;'>{last_play}</div>" if last_play else ""
 
         card_html = f"""
         <div style="
@@ -594,14 +584,16 @@ with tabs[3]:
             box-shadow: 0 8px 30px rgba(0,0,0,0.35);
         ">
             <div style="display:flex; align-items:center; justify-content:space-between;">
+
                 <!-- Away -->
                 <div style="flex:1; text-align:center;">
-                    <div style="{'box-shadow:0 0 12px '+away_color+';' if winner_abbr==away_abbr else ''} border-radius:50%; display:inline-block; position:relative;">
+                    <div style="{away_glow} border-radius:50%; display:inline-block; position:relative;">
                         <img src="{away['team']['logo']}" width="90" style="border-radius:50%;" />
                         {away_possession}
                     </div>
                     <div style="margin-top:8px;">{neon_text(away['team']['displayName'], away_abbr, 24)}</div>
                 </div>
+
                 <!-- Score + Status -->
                 <div style="flex:1.2; text-align:center;">
                     <div style="font-size:48px; font-weight:bold; color:white; text-shadow:0 0 10px black;">
@@ -618,9 +610,10 @@ with tabs[3]:
                         margin-top:6px;
                     ">{status_label}</span>
                 </div>
+
                 <!-- Home -->
                 <div style="flex:1; text-align:center;">
-                    <div style="{'box-shadow:0 0 12px '+home_color+';' if winner_abbr==home_abbr else ''} border-radius:50%; display:inline-block; position:relative;">
+                    <div style="{home_glow} border-radius:50%; display:inline-block; position:relative;">
                         <img src="{home['team']['logo']}" width="90" style="border-radius:50%;" />
                         {home_possession}
                     </div>
@@ -629,6 +622,7 @@ with tabs[3]:
             </div>
             {drive_html}
         </div>
+
         <style>
         @keyframes pulse {{
             0% {{ transform: scale(1); opacity: 1; }}
@@ -637,4 +631,5 @@ with tabs[3]:
         }}
         </style>
         """
+
         st.markdown(card_html, unsafe_allow_html=True)
