@@ -196,7 +196,6 @@ def fetch_nfl_scores():
             dt_utc = _parse_utc_iso(event.get("date", ""))
             game_status = _fmt_sched_time(dt_utc, tz_name="US/Eastern")
 
-        # Possession + drive summary
         situation = comp.get("situation", {})
         possession = situation.get("possession", {}).get("displayName", "")
         last_play = situation.get("lastPlay", {}).get("text", "")
@@ -211,6 +210,7 @@ def fetch_nfl_scores():
         })
 
     return games
+
 
 ### ---------- INJURIES ----------
 ESPN_TEAM_IDS = {
