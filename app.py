@@ -347,6 +347,58 @@ def nfl_subheader(text, icon="📊"):
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
+# --- GLOBAL CSS ---
+st.markdown("""
+<style>
+/* --- Cards --- */
+.card {
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    border-radius: 20px;
+    padding: 20px;
+    margin: 20px 0;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+}
+
+/* --- Scoreboard --- */
+.score-card { composes: card; text-align: center; }
+.team-block { flex: 1; text-align: center; }
+.team-score {
+    font-size: 40px;
+    font-weight: bold;
+    text-shadow: 0 0 6px black;
+}
+.live-pill, .final-pill, .scheduled-pill {
+    padding: 4px 12px; border-radius: 20px; font-weight: bold; color: white;
+}
+.live-pill { background: #dc2626; }
+.final-pill { background: #16a34a; }
+.scheduled-pill { background: #2563eb; }
+.info-box {
+    background: rgba(255,255,255,0.1);
+    border-radius: 12px;
+    padding: 6px 12px;
+    margin-top: 10px;
+    font-size: 14px;
+    font-style: italic;
+}
+.status-box {
+    text-align: center;
+    font-size: 16px;
+    margin-top: 6px;
+    color: #e5e7eb;
+}
+
+/* --- Power Rankings --- */
+.rank-row {
+    display: flex; align-items: center; justify-content: flex-start;
+    padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.15);
+}
+.rank-row:last-child { border-bottom: none; }
+</style>
+""", unsafe_allow_html=True)
+
+
 # Load data
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
@@ -526,102 +578,40 @@ with tabs[2]:
         st.markdown("</div>", unsafe_allow_html=True)
 
 
-# --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
-
-    # Inject shared CSS only once
-    if "scoreboard_css_loaded" not in st.session_state:
-        st.markdown("""
-        <style>
-        .score-card {
-            background: rgba(255,255,255,0.08);
-            backdrop-filter: blur(12px);
-            border-radius: 20px;
-            padding: 20px;
-            margin: 20px 0;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
-            text-align: center;
-        }
-        .team-block { flex: 1; text-align: center; }
-        .team-score {
-            font-size: 40px;
-            font-weight: bold;
-            text-shadow: 0 0 6px black;
-        }
-        .live-pill {
-            background: #dc2626; color: white;
-            padding: 4px 12px; border-radius: 20px;
-            font-weight: bold;
-        }
-        .final-pill {
-            background: #16a34a; color: white;
-            padding: 4px 12px; border-radius: 20px;
-            font-weight: bold;
-        }
-        .scheduled-pill {
-            background: #2563eb; color: white;
-            padding: 4px 12px; border-radius: 20px;
-            font-weight: bold;
-        }
-        .info-box {
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 6px 12px;
-            margin-top: 10px;
-            font-size: 14px;
-            font-style: italic;
-        }
-        .status-box {
-            text-align: center;
-            font-size: 16px;
-            margin-top: 6px;
-            color: #e5e7eb;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        st.session_state["scoreboard_css_loaded"] = True
-
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
 
     for game in games:
         away, home = game["away"], game["home"]
-        state, status_text = game.get("state","pre"), game.get("status","")
+        state = game.get("state","pre")
         comp = game.get("competition")
         situation = comp.get("situation", {}) if comp else {}
 
+        # Build summaries
         possession_id = situation.get("possession", {}).get("id")
         last_play = situation.get("lastPlay", {}).get("text","")
-        down = situation.get("down")
-        yard_line = situation.get("yardLine")
         desc = situation.get("shortDownDistanceText")
+        yard_line = situation.get("yardLine")
+        drive_summary = f"{desc} on {yard_line}" if desc else None
 
-        # Drive summary
-        drive_summary = None
-        if desc:
-            drive_summary = f"{desc} on {yard_line or '??'}"
-
-        # Clock + quarter
+        # Status
         status_obj = comp.get("status", {}) if comp else {}
         period = status_obj.get("period")
         clock = status_obj.get("displayClock", "")
         clock_text = f"Q{period} – {clock}" if state == "in" and period else None
 
-        # Pill
-        if state == "in":
-            pill_html = "<span class='live-pill'>LIVE</span>"
-        elif state == "post":
-            pill_html = "<span class='final-pill'>FINAL</span>"
-        else:
-            pill_html = f"<span class='scheduled-pill'>{status_text}</span>"
+        if state == "in": pill = "<span class='live-pill'>LIVE</span>"
+        elif state == "post": pill = "<span class='final-pill'>FINAL</span>"
+        else: pill = f"<span class='scheduled-pill'>{game.get('status','') }</span>"
 
-        # Winner highlight
+        # Highlight winner
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
-        # Game card (NO raw CSS inside!)
+        # Render card
         st.markdown(f"""
         <div class="score-card">
             <div style="display:flex; align-items:center; justify-content:space-between;">
@@ -632,12 +622,10 @@ with tabs[3]:
                         {'🏈 ' if str(away['team'].get('id')) == str(possession_id) else ''}{away.get('score','0')}
                     </div>
                 </div>
-
                 <div style="flex:0.7; text-align:center;">
-                    {pill_html}
+                    {pill}
                     {f"<div class='status-box'>{clock_text}</div>" if clock_text else ""}
                 </div>
-
                 <div class="team-block">
                     <img src="{home['team']['logo']}" width="80" />
                     <div>{neon_text(home['team']['displayName'], home['team']['abbreviation'], 26)}</div>
