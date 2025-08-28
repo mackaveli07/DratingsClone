@@ -14,6 +14,7 @@ EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
+
 NFL_FULL_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
     "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
@@ -39,7 +40,6 @@ TEAM_COLORS = {
     "SEA": "#002244", "TB": "#D50A0A", "TEN": "#0C2340", "WAS": "#5A1414"
 }
 
-# Common typo corrections to avoid KeyError lookups and mismatches
 TEAM_NAME_FIXES = {
     "Clevland Browns": "Cleveland Browns",
     "NY Jets": "New York Jets",
@@ -52,13 +52,10 @@ def map_team_name(name):
     if not name:
         return "Unknown"
     name = str(name).strip()
-    # fix common typos
     if name in TEAM_NAME_FIXES:
         name = TEAM_NAME_FIXES[name]
-    # abbreviation → full
     if name.upper() in NFL_FULL_NAMES:
         return NFL_FULL_NAMES[name.upper()]
-    # full (case-insensitive) → full
     for full in NFL_FULL_NAMES.values():
         if name.lower() == full.lower():
             return full
@@ -157,14 +154,14 @@ def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
         dt_utc = dt_utc.replace(tzinfo=datetime.timezone.utc)
     tz = pytz.timezone(tz_name)
     dt_local = dt_utc.astimezone(tz)
-    # %I gives 01-12; strip leading zero for nicer look
     return "Scheduled " + dt_local.strftime("%a %I:%M %p").replace(" 0", " ")
 
 @st.cache_data(ttl=30)
 def fetch_nfl_scores():
     """
     Return all games for the current scoreboard week from ESPN.
-    Each item: {"away": {...}, "home": {...}, "state": "in|post|pre", "status": "text"}
+    Each item: {"away": {...}, "home": {...}, "state": "in|post|pre",
+                "status": "text", "possession": team_displayName, "last_play": text }
     """
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
     try:
@@ -189,7 +186,7 @@ def fetch_nfl_scores():
 
         status = comp.get("status", {})
         stype = status.get("type", {})
-        state = stype.get("state", "")  # "pre" | "in" | "post"
+        state = stype.get("state", "")
 
         if state == "in":
             game_status = f"Q{status.get('period', '')} {status.get('displayClock', '')}"
@@ -197,9 +194,21 @@ def fetch_nfl_scores():
             game_status = "Final"
         else:
             dt_utc = _parse_utc_iso(event.get("date", ""))
-            game_status = _fmt_sched_time(dt_utc, tz_name="US/Eastern")  # change to America/Chicago if you prefer
+            game_status = _fmt_sched_time(dt_utc, tz_name="US/Eastern")
 
-        games.append({"away": away, "home": home, "state": state, "status": game_status})
+        # Possession + drive summary
+        situation = comp.get("situation", {})
+        possession = situation.get("possession", {}).get("displayName", "")
+        last_play = situation.get("lastPlay", {}).get("text", "")
+
+        games.append({
+            "away": away,
+            "home": home,
+            "state": state,
+            "status": game_status,
+            "possession": possession,
+            "last_play": last_play
+        })
 
     return games
 
@@ -527,7 +536,6 @@ with tabs[2]:
 
 
 # --- Scoreboard Tab ---
-# --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
@@ -538,48 +546,86 @@ with tabs[3]:
         state = game.get("state", "pre")
         status_text = game.get("status", "")
 
-        # status pill
+        possession_team = game.get("possession", "")
+        last_play = game.get("last_play", "")
+
         if state == "in":
             pill_color, status_label = "#16a34a", "LIVE"
         elif state == "post":
             pill_color, status_label = "#dc2626", "FINAL"
         else:
-            pill_color, status_label = "#2563eb", status_text  # includes kickoff time
+            pill_color, status_label = "#2563eb", status_text
+
+        away_abbr = away['team']['abbreviation']
+        home_abbr = home['team']['abbreviation']
+        away_color = TEAM_COLORS.get(away_abbr, "#9ca3af")
+        home_color = TEAM_COLORS.get(home_abbr, "#9ca3af")
+
+        away_score, home_score = int(away.get("score", "0")), int(home.get("score", "0"))
+        winner_abbr = None
+        if state == "post":
+            if away_score > home_score:
+                winner_abbr = away_abbr
+            elif home_score > away_score:
+                winner_abbr = home_abbr
 
         st.markdown(f"""
         <div style="
             background: rgba(255,255,255,0.08);
-            backdrop-filter: blur(12px);
-            border-radius: 20px;
-            padding: 20px;
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 24px;
+            padding: 22px;
             margin: 20px 0;
-            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
-            text-align: center;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.35);
         ">
             <div style="display:flex; align-items:center; justify-content:space-between;">
+                
+                <!-- Away -->
                 <div style="flex:1; text-align:center;">
-                    <img src="{away['team']['logo']}" width="80" />
-                    <div>{neon_text(away['team']['displayName'], away['team']['abbreviation'], 26)}</div>
-                    <div style="font-size:38px; font-weight:bold; color:white; text-shadow:0 0 6px black;">
-                        {away.get('score','0')}
+                    <div style="{'box-shadow:0 0 12px '+away_color+';' if winner_abbr==away_abbr else ''} border-radius:50%; display:inline-block; position:relative;">
+                        <img src="{away['team']['logo']}" width="90" style="border-radius:50%;" />
+                        {"<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == away['team']['displayName'] else ""}
                     </div>
+                    <div style="margin-top:8px;">{neon_text(away['team']['displayName'], away_abbr, 24)}</div>
                 </div>
-                <div style="flex:0.7; text-align:center;">
+
+                <!-- Score + Status -->
+                <div style="flex:1.2; text-align:center;">
+                    <div style="font-size:48px; font-weight:bold; color:white; text-shadow:0 0 10px black;">
+                        {away_score} <span style="color:#9ca3af;">–</span> {home_score}
+                    </div>
                     <span style="
                         background:{pill_color};
                         color:white;
-                        padding:6px 14px;
+                        padding:6px 16px;
                         border-radius:9999px;
                         font-weight:bold;
+                        animation:{'pulse 1.5s infinite' if state=='in' else 'none'};
+                        display:inline-block;
+                        margin-top:6px;
                     ">{status_label}</span>
                 </div>
+
+                <!-- Home -->
                 <div style="flex:1; text-align:center;">
-                    <img src="{home['team']['logo']}" width="80" />
-                    <div>{neon_text(home['team']['displayName'], home['team']['abbreviation'], 26)}</div>
-                    <div style="font-size:38px; font-weight:bold; color:white; text-shadow:0 0 6px black;">
-                        {home.get('score','0')}
+                    <div style="{'box-shadow:0 0 12px '+home_color+';' if winner_abbr==home_abbr else ''} border-radius:50%; display:inline-block; position:relative;">
+                        <img src="{home['team']['logo']}" width="90" style="border-radius:50%;" />
+                        {"<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == home['team']['displayName'] else ""}
                     </div>
+                    <div style="margin-top:8px;">{neon_text(home['team']['displayName'], home_abbr, 24)}</div>
                 </div>
             </div>
+
+            <!-- Drive Summary -->
+            {f'<div style="margin-top:12px; font-size:14px; color:#d1d5db; font-style:italic;">{last_play}</div>' if last_play else ''}
         </div>
+
+        <style>
+        @keyframes pulse {{
+            0% {{ transform: scale(1); opacity: 1; }}
+            50% {{ transform: scale(1.08); opacity: 0.8; }}
+            100% {{ transform: scale(1); opacity: 1; }}
+        }}
+        </style>
         """, unsafe_allow_html=True)
