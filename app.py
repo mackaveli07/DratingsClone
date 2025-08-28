@@ -527,20 +527,101 @@ with tabs[2]:
 
 
 # --- Scoreboard Tab ---
-# --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
+
+    # Inject shared CSS
+    st.markdown("""
+    <style>
+    .score-card {
+        background: rgba(255,255,255,0.08);
+        backdrop-filter: blur(12px);
+        border-radius: 20px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        text-align: center;
+    }
+    .team-block {
+        flex: 1;
+        text-align: center;
+    }
+    .team-score {
+        font-size: 40px;
+        font-weight: bold;
+        text-shadow: 0 0 6px black;
+    }
+    .live-pill {
+        background: #dc2626;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+    }
+    .final-pill {
+        background: #16a34a;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+    }
+    .scheduled-pill {
+        background: #2563eb;
+        color: white;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+    }
+    .info-box {
+        background: rgba(255,255,255,0.1);
+        border-radius: 12px;
+        padding: 6px 12px;
+        margin-top: 10px;
+        font-size: 14px;
+        font-style: italic;
+    }
+    .status-box {
+        text-align: center;
+        font-size: 16px;
+        margin-top: 6px;
+        color: #e5e7eb;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
+
     for game in games:
         away, home = game["away"], game["home"]
         state, status_text = game.get("state","pre"), game.get("status","")
         comp = game.get("competition")
         situation = comp.get("situation", {}) if comp else {}
+
         possession_id = situation.get("possession", {}).get("id")
         last_play = situation.get("lastPlay", {}).get("text","")
+        down = situation.get("down")
+        distance = situation.get("distance")
+        yard_line = situation.get("yardLine")
+        desc = situation.get("shortDownDistanceText")
 
+        # Build drive summary text
+        drive_summary = None
+        if down and distance:
+            drive_summary = f"{desc} on {yard_line or '??'}"
+        elif desc:
+            drive_summary = desc
+
+        # Game clock & quarter
+        status_obj = comp.get("status", {}) if comp else {}
+        period = status_obj.get("period")
+        clock = status_obj.get("displayClock", "")
+        clock_text = None
+        if state == "in" and period:
+            clock_text = f"Q{period} – {clock}"
+
+        # Status pill
         if state == "in":
             pill_html = "<span class='live-pill'>LIVE</span>"
         elif state == "post":
@@ -548,34 +629,35 @@ with tabs[3]:
         else:
             pill_html = f"<span class='scheduled-pill'>{status_text}</span>"
 
+        # Highlight winner if final
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
         st.markdown(f"""
-        <div style="background:rgba(255,255,255,0.08); backdrop-filter:blur(12px); border-radius:20px; padding:20px; margin:20px 0; box-shadow:0 8px 20px rgba(0,0,0,0.3); text-align:center;">
+        <div class="score-card">
             <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div style="flex:1; text-align:center;">
+                <div class="team-block">
                     <img src="{away['team']['logo']}" width="80" />
                     <div>{neon_text(away['team']['displayName'], away['team']['abbreviation'], 26)}</div>
-                    <div style="font-size:38px; font-weight:bold; color:{'#16a34a' if highlight_away else 'white'}; text-shadow:0 0 6px black;">
+                    <div class="team-score" style="color:{'#16a34a' if highlight_away else 'white'};">
                         {'🏈 ' if str(away['team'].get('id')) == str(possession_id) else ''}{away.get('score','0')}
                     </div>
                 </div>
+
                 <div style="flex:0.7; text-align:center;">
-        """, unsafe_allow_html=True)
-
-        st.markdown(pill_html, unsafe_allow_html=True)
-
-        st.markdown(f"""
+                    {pill_html}
+                    {f"<div class='status-box'>{clock_text}</div>" if clock_text else ""}
                 </div>
-                <div style="flex:1; text-align:center;">
+
+                <div class="team-block">
                     <img src="{home['team']['logo']}" width="80" />
                     <div>{neon_text(home['team']['displayName'], home['team']['abbreviation'], 26)}</div>
-                    <div style="font-size:38px; font-weight:bold; color:{'#16a34a' if highlight_home else 'white'}; text-shadow:0 0 6px black;">
+                    <div class="team-score" style="color:{'#16a34a' if highlight_home else 'white'};">
                         {'🏈 ' if str(home['team'].get('id')) == str(possession_id) else ''}{home.get('score','0')}
                     </div>
                 </div>
             </div>
-            {f'<div style="background:rgba(255,255,255,0.1); border-radius:12px; padding:6px 12px; margin-top:12px; font-size:14px; font-style:italic;">{last_play}</div>' if last_play else ''}
+            {f'<div class="info-box">📋 {drive_summary}</div>' if drive_summary else ''}
+            {f'<div class="info-box">📝 {last_play}</div>' if last_play else ''}
         </div>
         """, unsafe_allow_html=True)
