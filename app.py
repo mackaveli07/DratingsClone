@@ -458,12 +458,48 @@ with tabs[0]:
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Power Rankings Tab ---
 with tabs[1]:
     nfl_subheader("Elo Power Rankings", "📊")
-    pr_df = pd.DataFrame(sorted(ratings.items(), key=lambda x: x[1], reverse=True), columns=["Team", "Elo"])
-    st.dataframe(pr_df, use_container_width=True)
 
+    # Build rankings with current adjustments
+    adjusted_ratings = {}
+    for team_full in NFL_FULL_NAMES.values():
+        abbr = get_abbr(team_full)
+        base = ratings.get(team_full, BASE_ELO)
+
+        # Fetch adjustments
+        inj = fetch_injuries_espn(abbr) if abbr else []
+        kickoff = default_kickoff_unix(datetime.datetime.now())  # today baseline
+        weather = get_weather(team_full, kickoff)
+
+        adj = base + injury_adjustment(inj) + weather_adjustment(weather)
+        adjusted_ratings[team_full] = adj
+
+    pr_df = (
+        pd.DataFrame(sorted(adjusted_ratings.items(), key=lambda x: x[1], reverse=True),
+                     columns=["Team", "Adj Elo"])
+        .reset_index(drop=True)
+    )
+    pr_df.index = pr_df.index + 1
+    pr_df.index.name = "Rank"
+
+    # Render table with logos + neon
+    for rank, row in pr_df.iterrows():
+        team = row["Team"]
+        abbr = get_abbr(team)
+        elo_val = int(round(row["Adj Elo"]))
+
+        c1, c2, c3 = st.columns([1, 2, 2])
+        with c1:
+            st.markdown(f"**#{rank}**")
+        with c2:
+            safe_logo(abbr, 50)
+        with c3:
+            st.markdown(
+                f"{neon_text(team, abbr, 20)} – **{elo_val}**",
+                unsafe_allow_html=True
+            )
+        st.markdown("---")
 # --- Pick Winners Tab ---
 with tabs[2]:
     nfl_subheader("Weekly Pick’em", "📝")
