@@ -537,99 +537,99 @@ with tabs[2]:
 
 # --- Scoreboard Tab ---
 with tabs[3]:
-    st.subheader("NFL Scoreboard 🏟️")
+    nfl_subheader("NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
+
     for game in games:
         away, home = game["away"], game["home"]
         state = game.get("state", "pre")
         status_text = game.get("status", "")
 
-        possession_team = game.get("possession", "")
-        last_play = game.get("last_play", "")
+        # ESPN situation info
+        comp = game.get("competition") if "competition" in game else None
+        situation = comp.get("situation", {}) if comp else {}
+        possession_id = situation.get("possession", {}).get("id")
+        last_play = situation.get("lastPlay", {}).get("text", "")
 
-        # status pill
+        # Status pill with animation
         if state == "in":
-            pill_color, status_label = "#16a34a", "LIVE"
+            pill_html = """
+            <span style="
+                background:#16a34a;
+                color:white;
+                padding:6px 14px;
+                border-radius:9999px;
+                font-weight:bold;
+                animation: pulse 1.5s infinite;
+            ">LIVE</span>
+            <style>
+            @keyframes pulse {
+              0% { box-shadow: 0 0 0 0 rgba(22,163,74, 0.7); }
+              70% { box-shadow: 0 0 0 12px rgba(22,163,74, 0); }
+              100% { box-shadow: 0 0 0 0 rgba(22,163,74, 0); }
+            }
+            </style>
+            """
         elif state == "post":
-            pill_color, status_label = "#dc2626", "FINAL"
+            pill_html = """<span style="
+                background:#dc2626;
+                color:white;
+                padding:6px 14px;
+                border-radius:9999px;
+                font-weight:bold;
+            ">FINAL</span>"""
         else:
-            pill_color, status_label = "#2563eb", status_text
+            pill_html = f"""<span style="
+                background:#2563eb;
+                color:white;
+                padding:6px 14px;
+                border-radius:9999px;
+                font-weight:bold;
+            ">{status_text}</span>"""
 
-        away_abbr, home_abbr = away["team"]["abbreviation"], home["team"]["abbreviation"]
-        away_color, home_color = TEAM_COLORS.get(away_abbr, "#9ca3af"), TEAM_COLORS.get(home_abbr, "#9ca3af")
+        # Highlight winner when final
+        highlight_home = state == "post" and int(home.get("score", 0)) > int(away.get("score", 0))
+        highlight_away = state == "post" and int(away.get("score", 0)) > int(home.get("score", 0))
 
-        away_score, home_score = int(away.get("score", "0")), int(home.get("score", "0"))
-
-        # winner glow styles
-        away_glow = f"box-shadow:0 0 12px {away_color};" if state == "post" and away_score > home_score else ""
-        home_glow = f"box-shadow:0 0 12px {home_color};" if state == "post" and home_score > away_score else ""
-
-        # possession icons
-        away_possession = "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == away["team"]["displayName"] else ""
-        home_possession = "<span style='position:absolute; top:-12px; right:-12px; font-size:22px;'>🏈</span>" if possession_team == home["team"]["displayName"] else ""
-
-        # drive summary
-        drive_html = f"<div style='margin-top:12px; font-size:14px; color:#d1d5db; font-style:italic;'>{last_play}</div>" if last_play else ""
-
-        card_html = f"""
+        st.markdown(f"""
         <div style="
             background: rgba(255,255,255,0.08);
-            backdrop-filter: blur(16px);
-            border: 1px solid rgba(255,255,255,0.15);
-            border-radius: 24px;
-            padding: 22px;
+            backdrop-filter: blur(12px);
+            border-radius: 20px;
+            padding: 20px;
             margin: 20px 0;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+            text-align: center;
         ">
             <div style="display:flex; align-items:center; justify-content:space-between;">
-
                 <!-- Away -->
                 <div style="flex:1; text-align:center;">
-                    <div style="{away_glow} border-radius:50%; display:inline-block; position:relative;">
-                        <img src="{away['team']['logo']}" width="90" style="border-radius:50%;" />
-                        {away_possession}
+                    <img src="{away['team']['logo']}" width="80" />
+                    <div>{neon_text(away['team']['displayName'], away['team']['abbreviation'], 26)}</div>
+                    <div style="font-size:38px; font-weight:bold; 
+                                color:{'#16a34a' if highlight_away else 'white'};
+                                text-shadow:0 0 6px black;">
+                        {'🏈 ' if str(away['team'].get('id')) == str(possession_id) else ''}{away.get('score','0')}
                     </div>
-                    <div style="margin-top:8px;">{neon_text(away['team']['displayName'], away_abbr, 24)}</div>
                 </div>
-
-                <!-- Score + Status -->
-                <div style="flex:1.2; text-align:center;">
-                    <div style="font-size:48px; font-weight:bold; color:white; text-shadow:0 0 10px black;">
-                        {away_score} <span style="color:#9ca3af;">–</span> {home_score}
-                    </div>
-                    <span style="
-                        background:{pill_color};
-                        color:white;
-                        padding:6px 16px;
-                        border-radius:9999px;
-                        font-weight:bold;
-                        animation:{'pulse 1.5s infinite' if state=='in' else 'none'};
-                        display:inline-block;
-                        margin-top:6px;
-                    ">{status_label}</span>
+                <!-- Status -->
+                <div style="flex:0.7; text-align:center;">
+                    {pill_html}
                 </div>
-
                 <!-- Home -->
                 <div style="flex:1; text-align:center;">
-                    <div style="{home_glow} border-radius:50%; display:inline-block; position:relative;">
-                        <img src="{home['team']['logo']}" width="90" style="border-radius:50%;" />
-                        {home_possession}
+                    <img src="{home['team']['logo']}" width="80" />
+                    <div>{neon_text(home['team']['displayName'], home['team']['abbreviation'], 26)}</div>
+                    <div style="font-size:38px; font-weight:bold; 
+                                color:{'#16a34a' if highlight_home else 'white'};
+                                text-shadow:0 0 6px black;">
+                        {'🏈 ' if str(home['team'].get('id')) == str(possession_id) else ''}{home.get('score','0')}
                     </div>
-                    <div style="margin-top:8px;">{neon_text(home['team']['displayName'], home_abbr, 24)}</div>
                 </div>
             </div>
-            {drive_html}
+            <!-- Drive Summary -->
+            {f'<div style=\"background:rgba(255,255,255,0.1); border-radius:12px; padding:6px 12px; margin-top:12px; font-size:14px; font-style:italic;\">{last_play}</div>' if last_play else ''}
         </div>
-
-        <style>
-        @keyframes pulse {{
-            0% {{ transform: scale(1); opacity: 1; }}
-            50% {{ transform: scale(1.08); opacity: 0.8; }}
-            100% {{ transform: scale(1); opacity: 1; }}
-        }}
-        </style>
-        """
-
-        st.markdown(card_html, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
