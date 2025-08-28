@@ -541,7 +541,7 @@ with tabs[3]:
     games = fetch_nfl_scores()
     if not games:
         st.info("No NFL games today or scheduled.")
-        for game in games:
+    for game in games:
         away, home = game["away"], game["home"]
         state = game.get("state", "pre")
         status_text = game.get("status", "")
