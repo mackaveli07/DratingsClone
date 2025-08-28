@@ -160,8 +160,10 @@ def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
 def fetch_nfl_scores():
     """
     Return all games for the current scoreboard week from ESPN.
-    Each item: {"away": {...}, "home": {...}, "state": "in|post|pre",
-                "status": "text", "possession": team_displayName, "last_play": text }
+    Each item: {
+        "away": {...}, "home": {...}, "state": "in|post|pre", 
+        "status": "text", "competition": comp
+    }
     """
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
     try:
@@ -186,7 +188,7 @@ def fetch_nfl_scores():
 
         status = comp.get("status", {})
         stype = status.get("type", {})
-        state = stype.get("state", "")
+        state = stype.get("state", "")  # "pre" | "in" | "post"
 
         if state == "in":
             game_status = f"Q{status.get('period', '')} {status.get('displayClock', '')}"
@@ -196,17 +198,12 @@ def fetch_nfl_scores():
             dt_utc = _parse_utc_iso(event.get("date", ""))
             game_status = _fmt_sched_time(dt_utc, tz_name="US/Eastern")
 
-        situation = comp.get("situation", {})
-        possession = situation.get("possession", {}).get("displayName", "")
-        last_play = situation.get("lastPlay", {}).get("text", "")
-
         games.append({
             "away": away,
             "home": home,
             "state": state,
             "status": game_status,
-            "possession": possession,
-            "last_play": last_play
+            "competition": comp,   # include full competition data (situation, etc.)
         })
 
     return games
