@@ -1,14 +1,16 @@
-# NFL Elo Projections App — Neon + Silent Adjustments + Projections + Clean Scoreboard
+# NFL Elo Projections App — Neon + Adjustments + Projections + Scoreboard
 import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-import os, base64, requests, datetime, pytz
+import os, base64, requests, datetime, pytz, math
+
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
+
 
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
@@ -16,198 +18,68 @@ SCHEDULE_SHEET = "2025 schedule"
 
 
 NFL_FULL_NAMES = {
-    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
-    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
-    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
-    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
-    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
-    "KC": "Kansas City Chiefs", "LV": "Las Vegas Raiders", "LAC": "Los Angeles Chargers",
-    "LA": "Los Angeles Rams", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
-    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
-    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
-    "SF": "San Francisco 49ers", "SEA": "Seattle Seahawks", "TB": "Tampa Bay Buccaneers",
-    "TEN": "Tennessee Titans", "WAS": "Washington Commanders"
+"ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+"BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+"CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+"DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+"HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+"KC": "Kansas City Chiefs", "LV": "Las Vegas Raiders", "LAC": "Los Angeles Chargers",
+"LA": "Los Angeles Rams", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+"NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+"NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+"SF": "San Francisco 49ers", "SEA": "Seattle Seahawks", "TB": "Tampa Bay Buccaneers",
+"TEN": "Tennessee Titans", "WAS": "Washington Commanders"
 }
+
 
 TEAM_COLORS = {
-    "ARI": "#97233F", "ATL": "#A71930", "BAL": "#241773", "BUF": "#00338D",
-    "CAR": "#0085CA", "CHI": "#0B162A", "CIN": "#FB4F14", "CLE": "#311D00",
-    "DAL": "#003594", "DEN": "#FB4F14", "DET": "#0076B6", "GB": "#203731",
-    "HOU": "#03202F", "IND": "#002C5F", "JAX": "#006778", "KC": "#E31837",
-    "LV": "#000000", "LAC": "#0080C6", "LA": "#003594", "MIA": "#008E97",
-    "MIN": "#4F2683", "NE": "#002244", "NO": "#D3BC8D", "NYG": "#0B2265",
-    "NYJ": "#125740", "PHI": "#004C54", "PIT": "#FFB612", "SF": "#AA0000",
-    "SEA": "#002244", "TB": "#D50A0A", "TEN": "#0C2340", "WAS": "#5A1414"
+"ARI": "#97233F", "ATL": "#A71930", "BAL": "#241773", "BUF": "#00338D",
+"CAR": "#0085CA", "CHI": "#0B162A", "CIN": "#FB4F14", "CLE": "#311D00",
+"DAL": "#003594", "DEN": "#FB4F14", "DET": "#0076B6", "GB": "#203731",
+"HOU": "#03202F", "IND": "#002C5F", "JAX": "#006778", "KC": "#E31837",
+"LV": "#000000", "LAC": "#0080C6", "LA": "#003594", "MIA": "#008E97",
+"MIN": "#4F2683", "NE": "#002244", "NO": "#D3BC8D", "NYG": "#0B2265",
+"NYJ": "#125740", "PHI": "#004C54", "PIT": "#FFB612", "SF": "#AA0000",
+"SEA": "#002244", "TB": "#D50A0A", "TEN": "#0C2340", "WAS": "#5A1414"
 }
 
+
 TEAM_NAME_FIXES = {
-    "Clevland Browns": "Cleveland Browns",
-    "NY Jets": "New York Jets",
-    "NY Giants": "New York Giants",
-    "Jags": "Jacksonville Jaguars",
+"Clevland Browns": "Cleveland Browns",
+"NY Jets": "New York Jets",
+"NY Giants": "New York Giants",
+"Jags": "Jacksonville Jaguars",
 }
+
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
-    if not name:
-        return "Unknown"
-    name = str(name).strip()
-    if name in TEAM_NAME_FIXES:
-        name = TEAM_NAME_FIXES[name]
-    if name.upper() in NFL_FULL_NAMES:
-        return NFL_FULL_NAMES[name.upper()]
-    for full in NFL_FULL_NAMES.values():
-        if name.lower() == full.lower():
-            return full
-    return name
+if not name:
+return "Unknown"
+name = str(name).strip()
+if name in TEAM_NAME_FIXES:
+name = TEAM_NAME_FIXES[name]
+if name.upper() in NFL_FULL_NAMES:
+return NFL_FULL_NAMES[name.upper()]
+for full in NFL_FULL_NAMES.values():
+if name.lower() == full.lower():
+return full
+return name
+
 
 def get_abbr(team_full):
-    for abbr, full in NFL_FULL_NAMES.items():
-        if full == team_full:
-            return abbr
-    return None
+for abbr, full in NFL_FULL_NAMES.items():
+if full == team_full:
+return abbr
+return None
+
 
 def safe_logo(abbr, width=64):
-    path = f"Logos/{abbr}.png"
-    if abbr and os.path.exists(path):
-        st.image(path, width=width)
-    else:
-        st.markdown(
-            f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
-            f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
-            f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
-            unsafe_allow_html=True,
-        )
-
-def neon_text(text, abbr, size=24):
-    color = TEAM_COLORS.get(abbr, "#39ff14")
-    return f"""
-    <span style="
-        color: {color};
-        font-size: {size}px;
-        font-weight: bold;
-        text-shadow:
-            0 0 5px {color},
-            0 0 10px {color},
-            0 0 20px {color},
-            0 0 40px {color},
-            0 0 80px {color};
-    ">{text}</span>
-    """
-
-### ---------- ELO ----------
-def expected_score(r1, r2):
-    return 1 / (1 + 10 ** ((r2 - r1) / 400))
-
-def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
-    for t in list(elo_ratings.keys()):
-        elo_ratings[t] = base + reg * (elo_ratings[t] - base)
-
-def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
-    r1, r2 = elo_ratings[team1], elo_ratings[team2]
-    if home_team == team1:
-        r1 += HOME_ADVANTAGE
-    elif home_team == team2:
-        r2 += HOME_ADVANTAGE
-    expected1 = expected_score(r1, r2)
-    actual1 = 1 if score1 > score2 else 0
-    margin = abs(score1 - score2) or 1
-    mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
-    elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
-    elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
-
-def run_elo_pipeline(df):
-    elo_ratings = defaultdict(lambda: BASE_ELO)
-    if {"season","week"} <= set(df.columns):
-        df = df.sort_values(["season","week"])
-        for i, s in enumerate(df["season"].dropna().unique()):
-            if i > 0:
-                regress_preseason(elo_ratings)
-            for _, row in df[df["season"]==s].iterrows():
-                t1 = map_team_name(row.get("team1"))
-                t2 = map_team_name(row.get("team2"))
-                home = map_team_name(row.get("home_team", t2))
-                update_ratings(
-                    elo_ratings,
-                    t1, t2,
-                    row.get("score1", 0) or 0,
-                    row.get("score2", 0) or 0,
-                    home
-                )
-    return dict(elo_ratings)
-
-# ---------- SCOREBOARD HELPERS ----------
-def _parse_utc_iso(ts: str):
-    if not ts:
-        return None
-    try:
-        if ts.endswith("Z"):
-            ts = ts.replace("Z", "+00:00")
-        return datetime.datetime.fromisoformat(ts)
-    except Exception:
-        return None
-
-def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
-    if not dt_utc:
-        return "Scheduled"
-    if dt_utc.tzinfo is None:
-        dt_utc = dt_utc.replace(tzinfo=datetime.timezone.utc)
-    tz = pytz.timezone(tz_name)
-    dt_local = dt_utc.astimezone(tz)
-    return "Scheduled " + dt_local.strftime("%a %I:%M %p").replace(" 0", " ")
-
-@st.cache_data(ttl=30)
-def fetch_nfl_scores():
-    """
-    Return all games for the current scoreboard week from ESPN.
-    Each item: {
-        "away": {...}, "home": {...}, "state": "in|post|pre", 
-        "status": "text", "competition": comp
-    }
-    """
-    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-    try:
-        resp = requests.get(url, timeout=8)
-        if resp.status_code != 200:
-            return []
-        data = resp.json()
-    except Exception:
-        return []
-
-    games = []
-    for event in data.get("events", []):
-        comp = event.get("competitions", [{}])[0]
-        competitors = comp.get("competitors", [])
-        if len(competitors) < 2:
-            continue
-
-        away = next((t for t in competitors if t.get("homeAway") == "away"), None)
-        home = next((t for t in competitors if t.get("homeAway") == "home"), None)
-        if not away or not home:
-            continue
-
-        status = comp.get("status", {})
-        stype = status.get("type", {})
-        state = stype.get("state", "")  # "pre" | "in" | "post"
-
-        if state == "in":
-            game_status = f"Q{status.get('period', '')} {status.get('displayClock', '')}"
-        elif state == "post":
-            game_status = "Final"
-        else:
-            dt_utc = _parse_utc_iso(event.get("date", ""))
-            game_status = _fmt_sched_time(dt_utc, tz_name="US/Eastern")
-
-        games.append({
-            "away": away,
-            "home": home,
-            "state": state,
-            "status": game_status,
-            "competition": comp,   # include full competition data (situation, etc.)
-        })
-
-    return games
-
+path = f"Logos/{abbr}.png"
+if abbr and os.path.exists(path):
+st.image(path, width=width)
+else:
+st.markdown(
 
 ### ---------- INJURIES ----------
 ESPN_TEAM_IDS = {
