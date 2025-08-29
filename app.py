@@ -571,7 +571,8 @@ with tabs[3]:
             )
 
         # Drive + last play (only show if available)
-        if drive_summary:
-            st.caption(f"📋 {drive_summary}")
+       if drive_summary:
+            st.markdown(f"<p style='font-size:12px; color:#e5e7eb;'>📋 {drive_summary}</p>", unsafe_allow_html=True)
         if last_play:
-            st.caption(f"📝 {last_play}")
+            st.markdown(f"<p style='font-size:12px; color:#e5e7eb;'>📝 {last_play}</p>", unsafe_allow_html=True)
+
