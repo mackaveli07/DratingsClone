@@ -547,23 +547,12 @@ with tabs[3]:
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
-        # --- Game Card with neon gradient border ---
+        # --- Game Card ---
         st.markdown(
-            f"""
-            <div style="
-                background: rgba(0,0,0,0.25);
-                backdrop-filter: blur(16px);
-                border-radius: 24px;
-                padding: 20px;
-                margin: 16px 0;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-                border: 3px solid;
-                border-image: linear-gradient(90deg, #d50a0a, #013369) 1;
-                transition: transform 0.2s, box-shadow 0.2s;
-            "
-            onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 14px 40px rgba(0,0,0,0.5)';"
-            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 30px rgba(0,0,0,0.4)';">
-            """,
+            "<div style='background: rgba(0,0,0,0.25); backdrop-filter: blur(16px); "
+            "border-radius: 24px; padding: 20px; margin: 16px 0; "
+            "box-shadow: 0 10px 30px rgba(0,0,0,0.4); "
+            "border: 3px solid; border-image: linear-gradient(90deg, #d50a0a, #013369) 1;'>",
             unsafe_allow_html=True
         )
 
@@ -573,14 +562,15 @@ with tabs[3]:
         with col1:
             st.image(away['team']['logo'], width=60)
             team_abbr_away = get_abbr(away['team']['displayName'])
-            st.markdown(f"<div style='text-align:center;'>{neon_text(away['team']['displayName'], team_abbr_away, 22)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'>{neon_text(away['team']['displayName'], team_abbr_away, 24)}</div>", unsafe_allow_html=True)
             score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
             st.markdown(
-                f"<div style='position:relative; width:100%; background: rgba(255,255,255,0.05); border-radius:12px;'>"
-                f"<div style='width:{away.get('score','0')}%; background:{score_color_away}; height:12px; border-radius:12px;'></div>"
-                f"</div>"
-                f"<h2 style='text-align:center; color:{score_color_away}; text-shadow: 0 0 10px {score_color_away};'>"
-                f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h2>",
+                f"<div style='margin:6px auto; background: rgba(0,0,0,0.5); "
+                f"border-radius:16px; width:fit-content; padding:10px 20px;'>"
+                f"<h1 style='margin:0; color:{score_color_away}; text-shadow:0 0 12px {score_color_away}; "
+                f"font-size:48px; text-align:center;'>"
+                f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h1>"
+                f"</div>",
                 unsafe_allow_html=True
             )
 
@@ -592,14 +582,15 @@ with tabs[3]:
         with col3:
             st.image(home['team']['logo'], width=60)
             team_abbr_home = get_abbr(home['team']['displayName'])
-            st.markdown(f"<div style='text-align:center;'>{neon_text(home['team']['displayName'], team_abbr_home, 22)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='text-align:center;'>{neon_text(home['team']['displayName'], team_abbr_home, 24)}</div>", unsafe_allow_html=True)
             score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
             st.markdown(
-                f"<div style='position:relative; width:100%; background: rgba(255,255,255,0.05); border-radius:12px;'>"
-                f"<div style='width:{home.get('score','0')}%; background:{score_color_home}; height:12px; border-radius:12px;'></div>"
-                f"</div>"
-                f"<h2 style='text-align:center; color:{score_color_home}; text-shadow: 0 0 10px {score_color_home};'>"
-                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h2>",
+                f"<div style='margin:6px auto; background: rgba(0,0,0,0.5); "
+                f"border-radius:16px; width:fit-content; padding:10px 20px;'>"
+                f"<h1 style='margin:0; color:{score_color_home}; text-shadow:0 0 12px {score_color_home}; "
+                f"font-size:48px; text-align:center;'>"
+                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h1>"
+                f"</div>",
                 unsafe_allow_html=True
             )
 
