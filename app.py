@@ -547,12 +547,23 @@ with tabs[3]:
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
-        # --- Game Card ---
+        # --- Game Card with neon gradient border ---
         st.markdown(
-            "<div style='background: rgba(0,0,0,0.25); backdrop-filter: blur(16px); "
-            "border-radius: 24px; padding: 20px; margin: 16px 0; "
-            "box-shadow: 0 10px 30px rgba(0,0,0,0.3); "
-            "border: 2px solid rgba(255,255,255,0.15);'>",
+            f"""
+            <div style="
+                background: rgba(0,0,0,0.25);
+                backdrop-filter: blur(16px);
+                border-radius: 24px;
+                padding: 20px;
+                margin: 16px 0;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+                border: 3px solid;
+                border-image: linear-gradient(90deg, #d50a0a, #013369) 1;
+                transition: transform 0.2s, box-shadow 0.2s;
+            "
+            onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 14px 40px rgba(0,0,0,0.5)';"
+            onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 30px rgba(0,0,0,0.4)';">
+            """,
             unsafe_allow_html=True
         )
 
@@ -561,40 +572,33 @@ with tabs[3]:
         # --- Away Team ---
         with col1:
             st.image(away['team']['logo'], width=60)
-            st.markdown(
-                f"<div style='text-align:center; background: rgba(0,0,0,0.35); padding:4px 8px; "
-                f"border-radius:12px; color:#e5e7eb; font-weight:bold;'>{away['team']['displayName']}</div>",
-                unsafe_allow_html=True
-            )
             team_abbr_away = get_abbr(away['team']['displayName'])
+            st.markdown(f"<div style='text-align:center;'>{neon_text(away['team']['displayName'], team_abbr_away, 22)}</div>", unsafe_allow_html=True)
             score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
             st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_away}; "
-                f"text-shadow: 0 0 8px {score_color_away};'>"
+                f"<div style='position:relative; width:100%; background: rgba(255,255,255,0.05); border-radius:12px;'>"
+                f"<div style='width:{away.get('score','0')}%; background:{score_color_away}; height:12px; border-radius:12px;'></div>"
+                f"</div>"
+                f"<h2 style='text-align:center; color:{score_color_away}; text-shadow: 0 0 10px {score_color_away};'>"
                 f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
 
         # --- Status Column ---
         with col2:
-            st.markdown(
-                f"<h3 style='text-align:center; margin:10px 0; color:#e5e7eb;'>{status_text}</h3>",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"<h3 style='text-align:center; margin:10px 0; color:#e5e7eb;'>{status_text}</h3>", unsafe_allow_html=True)
 
         # --- Home Team ---
         with col3:
             st.image(home['team']['logo'], width=60)
-            st.markdown(
-                f"<div style='text-align:center; background: rgba(0,0,0,0.35); padding:4px 8px; "
-                f"border-radius:12px; color:#e5e7eb; font-weight:bold;'>{home['team']['displayName']}</div>",
-                unsafe_allow_html=True
-            )
             team_abbr_home = get_abbr(home['team']['displayName'])
+            st.markdown(f"<div style='text-align:center;'>{neon_text(home['team']['displayName'], team_abbr_home, 22)}</div>", unsafe_allow_html=True)
             score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
             st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_home}; "
-                f"text-shadow: 0 0 8px {score_color_home};'>"
+                f"<div style='position:relative; width:100%; background: rgba(255,255,255,0.05); border-radius:12px;'>"
+                f"<div style='width:{home.get('score','0')}%; background:{score_color_home}; height:12px; border-radius:12px;'></div>"
+                f"</div>"
+                f"<h2 style='text-align:center; color:{score_color_home}; text-shadow: 0 0 10px {score_color_home};'>"
                 f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
@@ -602,8 +606,8 @@ with tabs[3]:
         # --- Drive Summary Card ---
         if drive_summary or last_play:
             st.markdown(
-                "<div style='background: rgba(0,0,0,0.35); border-radius:12px; "
-                "padding:8px; margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center;'>",
+                "<div style='background: rgba(0,0,0,0.35); border-radius:12px; padding:8px; margin-top:10px; "
+                "color:#e5e7eb; font-size:12px; text-align:center; text-shadow: 0 0 4px #fff;'>",
                 unsafe_allow_html=True
             )
             if drive_summary:
