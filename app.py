@@ -1,4 +1,4 @@
-# NFL Elo Projections App — Neon + Adjustments + Projections + Scoreboard
+# NFL Elo Projections App — Full fixed file (scoreboard CSS fixed, indentation cleaned)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -69,7 +69,15 @@ def get_abbr(team_full):
 def safe_logo(abbr, width=64):
     path = f"Logos/{abbr}.png"
     if abbr and os.path.exists(path):
-        st.image(path, width=width)
+        try:
+            st.image(path, width=width)
+        except Exception:
+            st.markdown(
+                f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
+                f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
+                f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
+                unsafe_allow_html=True,
+            )
     else:
         st.markdown(
             f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
@@ -109,8 +117,8 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
     expected1 = expected_score(r1, r2)
-    actual1 = 1 if score1 > score2 else 0
-    margin = abs(score1 - score2) or 1
+    actual1 = 1 if (score1 or 0) > (score2 or 0) else 0
+    margin = abs((score1 or 0) - (score2 or 0)) or 1
     mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
@@ -195,13 +203,10 @@ def fetch_nfl_scores():
             "home": home,
             "state": state,
             "status": game_status,
-            "competition": comp,   # full data for possession + lastPlay
+            "competition": comp,
         })
 
     return games
-
-# --- The rest of the file continues with injuries, weather, headers, model utils, and tabs (Matchups, Power Rankings, Pick Winners, Scoreboard) ---
-
 
 ### ---------- INJURIES ----------
 ESPN_TEAM_IDS = {
@@ -216,8 +221,7 @@ def fetch_injuries_espn(team_abbr):
         return []
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
     try:
-        r = requests.get(url, timeout=6); r.raise_for_status()
-        data = r.json()
+        r = requests.get(url, timeout=6); r.raise_for_status(); data = r.json()
     except Exception:
         return []
     players = []
@@ -350,18 +354,17 @@ nfl_header("NFL Elo Projections")
 # --- GLOBAL CSS ---
 st.markdown("""
 <style>
-/* --- Cards --- */
-.card {
+.card, .score-card {
     background: rgba(255,255,255,0.08);
     backdrop-filter: blur(12px);
     border-radius: 20px;
     padding: 20px;
     margin: 20px 0;
     box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+    text-align: center;
 }
 
 /* --- Scoreboard --- */
-.score-card { composes: card; text-align: center; }
 .team-block { flex: 1; text-align: center; }
 .team-score {
     font-size: 40px;
@@ -369,9 +372,14 @@ st.markdown("""
     text-shadow: 0 0 6px black;
 }
 .live-pill, .final-pill, .scheduled-pill {
-    padding: 4px 12px; border-radius: 20px; font-weight: bold; color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-weight: bold;
+    color: white;
+    display: inline-block;
+    margin-bottom: 6px;
 }
-.live-pill { background: #dc2626; }
+.live-pill { background: #dc2626; animation: pulse 1.5s infinite; }
 .final-pill { background: #16a34a; }
 .scheduled-pill { background: #2563eb; }
 .info-box {
@@ -395,9 +403,14 @@ st.markdown("""
     padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.15);
 }
 .rank-row:last-child { border-bottom: none; }
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 5px #dc2626, 0 0 10px #dc2626; }
+    50% { box-shadow: 0 0 15px #dc2626, 0 0 30px #dc2626; }
+    100% { box-shadow: 0 0 5px #dc2626, 0 0 10px #dc2626; }
+}
 </style>
 """, unsafe_allow_html=True)
-
 
 # Load data
 try:
@@ -497,13 +510,13 @@ with tabs[0]:
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"**{team_away}**")
-                if away_inj: 
+                if away_inj:
                     for p in away_inj: st.write(p)
                 else:
                     st.caption("No reported injuries.")
             with c2:
                 st.markdown(f"**{team_home}**")
-                if home_inj: 
+                if home_inj:
                     for p in home_inj: st.write(p)
                 else:
                     st.caption("No reported injuries.")
