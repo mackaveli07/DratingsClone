@@ -547,34 +547,38 @@ with tabs[3]:
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
-        # Layout card
+        # --- Game Card ---
         st.markdown(
-            "<div style='background: rgba(255,255,255,0.08); backdrop-filter: blur(14px); "
-            "border-radius: 24px; padding: 20px; margin: 16px 0; box-shadow: 0 8px 20px rgba(0,0,0,0.2);'>",
+            "<div style='background: rgba(0,0,0,0.25); backdrop-filter: blur(16px); "
+            "border-radius: 24px; padding: 20px; margin: 16px 0; "
+            "box-shadow: 0 10px 30px rgba(0,0,0,0.3); "
+            "border: 2px solid rgba(255,255,255,0.15);'>",
             unsafe_allow_html=True
         )
 
-        col1, col2, col3 = st.columns([3, 2, 3])
+        col1, col2, col3 = st.columns([3,2,3])
 
         # --- Away Team ---
         with col1:
             st.image(away['team']['logo'], width=60)
             st.markdown(
-                f"<div style='text-align:center; font-weight:bold;'>{away['team']['displayName']}</div>",
+                f"<div style='text-align:center; background: rgba(0,0,0,0.35); padding:4px 8px; "
+                f"border-radius:12px; color:#e5e7eb; font-weight:bold;'>{away['team']['displayName']}</div>",
                 unsafe_allow_html=True
             )
             team_abbr_away = get_abbr(away['team']['displayName'])
             score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
             st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_away}; text-shadow: 0 0 8px {score_color_away};'>"
+                f"<h2 style='text-align:center; color:{score_color_away}; "
+                f"text-shadow: 0 0 8px {score_color_away};'>"
                 f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
 
-        # --- Status ---
+        # --- Status Column ---
         with col2:
             st.markdown(
-                f"<h3 style='text-align:center; margin:10px 0;'>{status_text}</h3>",
+                f"<h3 style='text-align:center; margin:10px 0; color:#e5e7eb;'>{status_text}</h3>",
                 unsafe_allow_html=True
             )
 
@@ -582,27 +586,30 @@ with tabs[3]:
         with col3:
             st.image(home['team']['logo'], width=60)
             st.markdown(
-                f"<div style='text-align:center; font-weight:bold;'>{home['team']['displayName']}</div>",
+                f"<div style='text-align:center; background: rgba(0,0,0,0.35); padding:4px 8px; "
+                f"border-radius:12px; color:#e5e7eb; font-weight:bold;'>{home['team']['displayName']}</div>",
                 unsafe_allow_html=True
             )
             team_abbr_home = get_abbr(home['team']['displayName'])
             score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
             st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_home}; text-shadow: 0 0 8px {score_color_home};'>"
+                f"<h2 style='text-align:center; color:{score_color_home}; "
+                f"text-shadow: 0 0 8px {score_color_home};'>"
                 f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
 
-        # --- Drive Summary / Last Play ---
-        if drive_summary:
+        # --- Drive Summary Card ---
+        if drive_summary or last_play:
             st.markdown(
-                f"<p style='font-size:12px; color:#e5e7eb; margin:4px 0;'>📋 {drive_summary}</p>",
+                "<div style='background: rgba(0,0,0,0.35); border-radius:12px; "
+                "padding:8px; margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center;'>",
                 unsafe_allow_html=True
             )
-        if last_play:
-            st.markdown(
-                f"<p style='font-size:12px; color:#e5e7eb; margin:2px 0;'>📝 {last_play}</p>",
-                unsafe_allow_html=True
-            )
+            if drive_summary:
+                st.markdown(f"📋 {drive_summary}", unsafe_allow_html=True)
+            if last_play:
+                st.markdown(f"📝 {last_play}", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
