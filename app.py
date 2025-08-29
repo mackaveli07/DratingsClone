@@ -1,4 +1,4 @@
-# NFL Elo Projections App — Scoreboard CSS isolated (inline styles only)
+# NFL Elo Projections App — Scoreboard CSS isolated (inline styles only, updated with frosted glass backgrounds)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -60,8 +60,6 @@ def map_team_name(name):
             return full
     return name
 
-
-
 def get_abbr(team_full):
     for abbr, full in NFL_FULL_NAMES.items():
         if full == team_full:
@@ -104,10 +102,7 @@ def neon_text(text, abbr, size=24):
     ">{text}</span>
     """
 
-
 # --- Set App Background ---
-import base64, os
-
 def set_background(image_path="Shield.png"):
     if os.path.exists(image_path):
         with open(image_path, "rb") as f:
@@ -115,23 +110,33 @@ def set_background(image_path="Shield.png"):
         st.markdown(
             f"""
             <style>
-            /* Full page background */
             .stApp {{
-                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)),
+                background: linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.85)),
                             url("data:image/png;base64,{b64}") no-repeat center center fixed;
                 background-size: cover;
-            }}
-            /* Optional: Adjust text glow and panel shadows if needed */
-            .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {{
                 color: white;
+            }}
+            
+            /* Frosted glass cards */
+            .card {{
+                background: rgba(30,30,30,0.6);
+                backdrop-filter: blur(14px);
+                border-radius: 20px;
+                padding: 20px;
+                margin: 20px 0;
+                box-shadow: 0 8px 25px rgba(0,0,0,0.4);
             }}
             </style>
             """,
             unsafe_allow_html=True
         )
 
-# Call it at the top of the app
 set_background("Shield.png")
+
+# The rest of your code (Elo, tabs, scoreboard, etc.) should now wrap cards/sections with:
+# st.markdown("<div class='card'>", unsafe_allow_html=True)
+# ... content ...
+# st.markdown("</div>", unsafe_allow_html=True)
 
 
 ### ---------- ELO ----------
