@@ -60,6 +60,8 @@ def map_team_name(name):
             return full
     return name
 
+
+
 def get_abbr(team_full):
     for abbr, full in NFL_FULL_NAMES.items():
         if full == team_full:
@@ -101,6 +103,30 @@ def neon_text(text, abbr, size=24):
             0 0 80px {color};
     ">{text}</span>
     """
+
+
+# --- Set full-page background ---
+def set_background(image_path="Shield.png"):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as f:
+            img_data = base64.b64encode(f.read()).decode()
+        st.markdown(
+            f"""
+            <style>
+            .stApp {{
+                background-image: url("data:image/png;base64,{img_data}");
+                background-size: cover;
+                background-position: center;
+                background-repeat: no-repeat;
+                background-attachment: fixed;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+set_background("Shield.png")
+
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
