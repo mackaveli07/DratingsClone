@@ -547,32 +547,62 @@ with tabs[3]:
         highlight_home = state == "post" and int(home.get("score",0)) > int(away.get("score",0))
         highlight_away = state == "post" and int(away.get("score",0)) > int(home.get("score",0))
 
-        # Layout
-        st.markdown("---")
+        # Layout card
+        st.markdown(
+            "<div style='background: rgba(255,255,255,0.08); backdrop-filter: blur(14px); "
+            "border-radius: 24px; padding: 20px; margin: 16px 0; box-shadow: 0 8px 20px rgba(0,0,0,0.2);'>",
+            unsafe_allow_html=True
+        )
+
         col1, col2, col3 = st.columns([3, 2, 3])
 
+        # --- Away Team ---
         with col1:
             st.image(away['team']['logo'], width=60)
-            st.markdown(f"**{away['team']['displayName']}**")
             st.markdown(
-                f"### {'🏈 ' if str(away['team'].get('id')) == str(possession_id) else ''}{away.get('score','0')}",
+                f"<div style='text-align:center; font-weight:bold;'>{away['team']['displayName']}</div>",
+                unsafe_allow_html=True
+            )
+            team_abbr_away = get_abbr(away['team']['displayName'])
+            score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
+            st.markdown(
+                f"<h2 style='text-align:center; color:{score_color_away}; text-shadow: 0 0 8px {score_color_away};'>"
+                f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
 
+        # --- Status ---
         with col2:
-            st.markdown(f"### {status_text}", unsafe_allow_html=True)
+            st.markdown(
+                f"<h3 style='text-align:center; margin:10px 0;'>{status_text}</h3>",
+                unsafe_allow_html=True
+            )
 
+        # --- Home Team ---
         with col3:
             st.image(home['team']['logo'], width=60)
-            st.markdown(f"**{home['team']['displayName']}**")
             st.markdown(
-                f"### {'🏈 ' if str(home['team'].get('id')) == str(possession_id) else ''}{home.get('score','0')}",
+                f"<div style='text-align:center; font-weight:bold;'>{home['team']['displayName']}</div>",
+                unsafe_allow_html=True
+            )
+            team_abbr_home = get_abbr(home['team']['displayName'])
+            score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
+            st.markdown(
+                f"<h2 style='text-align:center; color:{score_color_home}; text-shadow: 0 0 8px {score_color_home};'>"
+                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h2>",
                 unsafe_allow_html=True
             )
 
-        # Drive + last play (only show if available)
-       if drive_summary:
-            st.markdown(f"<p style='font-size:12px; color:#e5e7eb;'>📋 {drive_summary}</p>", unsafe_allow_html=True)
+        # --- Drive Summary / Last Play ---
+        if drive_summary:
+            st.markdown(
+                f"<p style='font-size:12px; color:#e5e7eb; margin:4px 0;'>📋 {drive_summary}</p>",
+                unsafe_allow_html=True
+            )
         if last_play:
-            st.markdown(f"<p style='font-size:12px; color:#e5e7eb;'>📝 {last_play}</p>", unsafe_allow_html=True)
+            st.markdown(
+                f"<p style='font-size:12px; color:#e5e7eb; margin:2px 0;'>📝 {last_play}</p>",
+                unsafe_allow_html=True
+            )
 
+        st.markdown("</div>", unsafe_allow_html=True)
