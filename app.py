@@ -558,21 +558,19 @@ with tabs[3]:
 
         col1, col2, col3 = st.columns([3,2,3])
 
-        # --- Away Team ---
-        with col1:
-            st.image(away['team']['logo'], width=60)
-            team_abbr_away = get_abbr(away['team']['displayName'])
-            st.markdown(f"<div style='text-align:center;'>{neon_text(away['team']['displayName'], team_abbr_away, 24)}</div>", unsafe_allow_html=True)
-            score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
-            st.markdown(
-                f"<div style='margin:6px auto; background: rgba(0,0,0,0.5); "
-                f"border-radius:16px; width:fit-content; padding:10px 20px;'>"
-                f"<h1 style='margin:0; color:{score_color_away}; text-shadow:0 0 12px {score_color_away}; "
-                f"font-size:48px; text-align:center;'>"
-                f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h1>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+       # --- Away Team ---
+    with col1:
+        st.image(away['team']['logo'], width=60)
+        team_abbr_away = get_abbr(away['team']['displayName'])
+        st.markdown(f"<div style='text-align:center;'>{neon_text(away['team']['displayName'], team_abbr_away, 24)}</div>", unsafe_allow_html=True)
+        score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
+        st.markdown(
+            f"<h1 style='margin:6px 0; color:{score_color_away}; "
+            f"text-shadow: 0 0 12px {score_color_away}, 0 0 24px {score_color_away}; "
+            f"font-size:48px; text-align:center;'>"
+            f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{away.get('score','0')}</h1>",
+            unsafe_allow_html=True
+        )
 
         # --- Status Column ---
         with col2:
@@ -585,15 +583,12 @@ with tabs[3]:
             st.markdown(f"<div style='text-align:center;'>{neon_text(home['team']['displayName'], team_abbr_home, 24)}</div>", unsafe_allow_html=True)
             score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
             st.markdown(
-                f"<div style='margin:6px auto; background: rgba(0,0,0,0.5); "
-                f"border-radius:16px; width:fit-content; padding:10px 20px;'>"
-                f"<h1 style='margin:0; color:{score_color_home}; text-shadow:0 0 12px {score_color_home}; "
+                f"<h1 style='margin:6px 0; color:{score_color_home}; "
+                f"text-shadow: 0 0 12px {score_color_home}, 0 0 24px {score_color_home}; "
                 f"font-size:48px; text-align:center;'>"
-                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h1>"
-                f"</div>",
+                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{home.get('score','0')}</h1>",
                 unsafe_allow_html=True
             )
-
         # --- Drive Summary Card ---
         if drive_summary or last_play:
             st.markdown(
