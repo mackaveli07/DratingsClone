@@ -105,26 +105,32 @@ def neon_text(text, abbr, size=24):
     """
 
 
-# --- Set full-page background ---
+# --- Set App Background ---
+import base64, os
+
 def set_background(image_path="Shield.png"):
     if os.path.exists(image_path):
         with open(image_path, "rb") as f:
-            img_data = base64.b64encode(f.read()).decode()
+            b64 = base64.b64encode(f.read()).decode()
         st.markdown(
             f"""
             <style>
+            /* Full page background */
             .stApp {{
-                background-image: url("data:image/png;base64,{img_data}");
+                background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)),
+                            url("data:image/png;base64,{b64}") no-repeat center center fixed;
                 background-size: cover;
-                background-position: center;
-                background-repeat: no-repeat;
-                background-attachment: fixed;
+            }}
+            /* Optional: Adjust text glow and panel shadows if needed */
+            .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4, .stMarkdown h5, .stMarkdown h6 {{
+                color: white;
             }}
             </style>
             """,
             unsafe_allow_html=True
         )
 
+# Call it at the top of the app
 set_background("Shield.png")
 
 
