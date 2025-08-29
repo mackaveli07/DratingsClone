@@ -520,7 +520,7 @@ with tabs[3]:
     
     if not games:
         st.info("No NFL games today or scheduled.")
-    
+
     for game in games:
         away, home = game["away"], game["home"]
         state = game.get("state", "pre")
@@ -550,6 +550,14 @@ with tabs[3]:
         score_away = int(away.get("score", 0))
         highlight_home = state == "post" and score_home > score_away
         highlight_away = state == "post" and score_away > score_home
+
+        # --- Game Card Container with black background ---
+        st.markdown(
+            "<div style='background: #000000; backdrop-filter: blur(16px); border-radius:24px; "
+            "padding:20px; margin:16px 0; box-shadow:0 10px 30px rgba(0,0,0,0.5); "
+            "border:3px solid; border-image: linear-gradient(90deg, #d50a0a, #013369) 1;'>",
+            unsafe_allow_html=True
+        )
 
         col1, col2, col3 = st.columns([3, 2, 3])
 
@@ -584,7 +592,7 @@ with tabs[3]:
         # --- Drive Summary / Last Play ---
         if drive_summary or last_play:
             st.markdown(
-                "<div style='background: rgba(0,0,0,0.35); border-radius:12px; padding:8px; "
+                "<div style='background: rgba(20,20,20,0.7); border-radius:12px; padding:8px; "
                 "margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center; text-shadow:0 0 4px #fff;'>",
                 unsafe_allow_html=True
             )
@@ -594,10 +602,4 @@ with tabs[3]:
                 st.markdown(f"📝 {last_play}", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        # --- Game Card Container ---
-        st.markdown(
-            "<div style='background: rgba(0,0,0,0.25); backdrop-filter: blur(16px); border-radius:24px; "
-            "padding:20px; margin:16px 0; box-shadow:0 10px 30px rgba(0,0,0,0.4); "
-            "border:3px solid; border-image: linear-gradient(90deg, #d50a0a, #013369) 1;'></div>",
-            unsafe_allow_html=True
-        )
+        st.markdown("</div>", unsafe_allow_html=True)
