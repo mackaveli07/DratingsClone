@@ -1,4 +1,4 @@
-# NFL Elo Projections App — Scoreboard CSS isolated (inline styles only, updated with frosted glass backgrounds)
+# NFL Elo Projections App — Scoreboard CSS isolated (inline styles only, updated with frosted glass backgrounds & mobile responsive)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -116,7 +116,7 @@ def set_background(image_path="Shield.png"):
                 background-size: cover;
                 color: white;
             }}
-            
+
             /* Frosted glass cards */
             .card {{
                 background: rgba(30,30,30,0.6);
@@ -126,6 +126,35 @@ def set_background(image_path="Shield.png"):
                 margin: 20px 0;
                 box-shadow: 0 8px 25px rgba(0,0,0,0.4);
             }}
+
+            /* Mobile responsiveness */
+            @media (max-width: 768px) {{
+                h1, h2, h3, h4, h5, h6 {{
+                    font-size: 90% !important;
+                }}
+                .card {{
+                    padding: 14px !important;
+                    margin: 12px 0 !important;
+                }}
+                img {{
+                    max-width: 80px !important;
+                    height: auto !important;
+                }}
+                .stMarkdown p {{
+                    font-size: 14px !important;
+                }}
+            }}
+            @media (max-width: 480px) {{
+                .card {{
+                    padding: 10px !important;
+                }}
+                h1, h2, h3 {{
+                    font-size: 80% !important;
+                }}
+                img {{
+                    max-width: 60px !important;
+                }}
+            }}
             </style>
             """,
             unsafe_allow_html=True
@@ -133,10 +162,8 @@ def set_background(image_path="Shield.png"):
 
 set_background("Shield.png")
 
-# The rest of your code (Elo, tabs, scoreboard, etc.) should now wrap cards/sections with:
-# st.markdown("<div class='card'>", unsafe_allow_html=True)
-# ... content ...
-# st.markdown("</div>", unsafe_allow_html=True)
+
+
 
 
 ### ---------- ELO ----------
