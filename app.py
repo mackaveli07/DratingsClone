@@ -1,4 +1,4 @@
-# NFL Elo Projections App — Scoreboard CSS isolated (inline styles only, updated with frosted glass backgrounds & mobile responsive)
+# NFL Elo Projections App — full rebuild with Kelly & per-game market odds
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,7 +14,7 @@ EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
-# --- Kelly bankroll default ---
+# default if user doesn't change in sidebar
 DEFAULT_BANKROLL = 50
 
 NFL_FULL_NAMES = {
@@ -271,7 +271,6 @@ def fetch_nfl_scores():
 
     return games
 
-
 ### ---------- INJURIES ----------
 ESPN_TEAM_IDS = {
     "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
@@ -430,6 +429,11 @@ def implied_odds_from_prob(prob):
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
+# Sidebar global settings
+st.sidebar.header("Bankroll / Settings")
+bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1.0, value=float(DEFAULT_BANKROLL), step=1.0, format="%.2f")
+st.sidebar.markdown("**Kelly stakes use the bankroll value above.**")
+
 # Load data
 try:
     hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
@@ -482,15 +486,28 @@ with tabs[0]:
         win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
         win_prob_away = 1 - win_prob_home
 
-        # --- Kelly Criterion (shown in $ using DEFAULT_BANKROLL) ---
-        odds_home = implied_odds_from_prob(win_prob_home)
-        odds_away = implied_odds_from_prob(win_prob_away)
+        # Market odds input (decimal odds) — unique keys per matchup to preserve values
+        col_odds1, col_odds2 = st.columns([1,1])
+        with col_odds1:
+            odds_away = st.number_input(
+                f"{team_away} Odds (decimal)",
+                min_value=1.01, value=2.0, step=0.01,
+                key=f"odds_away_{team_away}_{team_home}"
+            )
+        with col_odds2:
+            odds_home = st.number_input(
+                f"{team_home} Odds (decimal)",
+                min_value=1.01, value=2.0, step=0.01,
+                key=f"odds_home_{team_home}_{team_away}"
+            )
+
+        # Kelly criterion calculation based on market odds and global bankroll
         kelly_home = kelly_fraction(win_prob_home, odds_home)
         kelly_away = kelly_fraction(win_prob_away, odds_away)
-        stake_home = kelly_home * DEFAULT_BANKROLL
-        stake_away = kelly_away * DEFAULT_BANKROLL
+        stake_home = kelly_home * bankroll
+        stake_away = kelly_away * bankroll
 
-        # Projected score using season-specific totals
+        # Projected score using season-specific totals (fallback to overall_avg)
         season_val = row.get("season")
         try:
             season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
@@ -511,7 +528,7 @@ with tabs[0]:
             safe_logo(abbr_away, 120)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Kelly Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_away:.2f} — Kelly: {kelly_away:.2%} — Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
         with col_mid:
             st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
             st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
@@ -519,7 +536,7 @@ with tabs[0]:
             safe_logo(abbr_home, 120)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Kelly Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
 
         with st.expander("Weather Forecast 🌤️"):
             if weather:
@@ -603,6 +620,20 @@ with tabs[2]:
         picks[f"{t_away} @ {t_home}"] = choice
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # Optionally: allow download/export of picks to Excel sheet called "Picks" matching schedule format.
+    if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
+        try:
+            # Attach picks to a dataframe and save to same Excel file
+            picks_df = pd.DataFrame([
+                {"matchup": k, "pick": v} for k, v in picks.items()
+            ])
+            # read existing file and write picks sheet
+            with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                picks_df.to_excel(writer, sheet_name="Picks", index=False)
+            st.success("Picks saved to Excel.")
+        except Exception as e:
+            st.error(f"Failed to save picks: {e}")
+
 # --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
@@ -653,7 +684,13 @@ with tabs[3]:
 
         # --- Away Team ---
         with col1:
-            st.image(away['team']['logo'], width=60)
+            # ESPN provides logos as URLs in scoreboard; use them if present
+            try:
+                logo_url = away['team'].get('logo')
+                if logo_url:
+                    st.image(logo_url, width=60)
+            except Exception:
+                pass
             team_abbr_away = get_abbr(away['team']['displayName'])
             st.markdown(f"<div style='text-align:center'>{neon_text(away['team']['displayName'], team_abbr_away, 22)}</div>", unsafe_allow_html=True)
             score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
@@ -669,7 +706,12 @@ with tabs[3]:
 
         # --- Home Team ---
         with col3:
-            st.image(home['team']['logo'], width=60)
+            try:
+                logo_url = home['team'].get('logo')
+                if logo_url:
+                    st.image(logo_url, width=60)
+            except Exception:
+                pass
             team_abbr_home = get_abbr(home['team']['displayName'])
             st.markdown(f"<div style='text-align:center'>{neon_text(home['team']['displayName'], team_abbr_home, 22)}</div>", unsafe_allow_html=True)
             score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
