@@ -14,6 +14,9 @@ EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
+# --- Kelly bankroll default ---
+DEFAULT_BANKROLL = 50
+
 NFL_FULL_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
     "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
@@ -161,10 +164,6 @@ def set_background(image_path="Shield.png"):
         )
 
 set_background("Shield.png")
-
-
-
-
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
@@ -411,6 +410,22 @@ def nfl_subheader(text, icon="📊"):
         unsafe_allow_html=True
     )
 
+### ---------- KELLY BANKROLL MANAGEMENT ----------
+def kelly_fraction(win_prob, odds_decimal):
+    """
+    Kelly Criterion:
+      f* = (bp - q) / b, where b = odds_decimal - 1, p = win_prob, q = 1-p
+    Returns fraction of bankroll to bet (>= 0).
+    """
+    b = odds_decimal - 1 if odds_decimal else 0
+    p = max(min(win_prob, 1), 0)
+    q = 1 - p
+    f = (b * p - q) / b if b > 0 else 0
+    return max(f, 0)
+
+def implied_odds_from_prob(prob):
+    return 1 / prob if prob and prob > 0 else None
+
 ### ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
@@ -467,6 +482,15 @@ with tabs[0]:
         win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
         win_prob_away = 1 - win_prob_home
 
+        # --- Kelly Criterion (shown in $ using DEFAULT_BANKROLL) ---
+        odds_home = implied_odds_from_prob(win_prob_home)
+        odds_away = implied_odds_from_prob(win_prob_away)
+        kelly_home = kelly_fraction(win_prob_home, odds_home)
+        kelly_away = kelly_fraction(win_prob_away, odds_away)
+        stake_home = kelly_home * DEFAULT_BANKROLL
+        stake_away = kelly_away * DEFAULT_BANKROLL
+
+        # Projected score using season-specific totals
         season_val = row.get("season")
         try:
             season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
@@ -487,6 +511,7 @@ with tabs[0]:
             safe_logo(abbr_away, 120)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Kelly Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
         with col_mid:
             st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
             st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
@@ -494,6 +519,7 @@ with tabs[0]:
             safe_logo(abbr_home, 120)
             st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
             st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
+            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Kelly Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
 
         with st.expander("Weather Forecast 🌤️"):
             if weather:
