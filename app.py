@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
-from docx import Document
+from articles_fetcher import GitHubWordArticlesDynamic
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
