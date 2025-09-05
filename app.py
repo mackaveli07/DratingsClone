@@ -165,6 +165,37 @@ def set_background(image_path="Shield.png"):
 
 set_background("Shield.png")
 
+# ---------- GITHUB ARTICLES ----------
+GITHUB_USER = "your-username"  # replace with your GitHub username
+GITHUB_REPO = "your-repo"      # replace with your repo name
+GITHUB_PATH = "articles"       # folder containing your markdown articles
+GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+@st.cache_data(ttl=3600)
+def fetch_github_articles():
+    try:
+        resp = requests.get(GITHUB_API, timeout=8)
+        resp.raise_for_status()
+        files = resp.json()
+        articles = []
+        for f in files:
+            # Only pull .md files
+            if f['name'].endswith(".md"):
+                content_resp = requests.get(f['download_url'], timeout=6)
+                content_resp.raise_for_status()
+                articles.append({
+                    "title": f['name'].replace(".md",""),
+                    "content": content_resp.text,
+                    "url": f['html_url']
+                })
+        # Sort alphabetically
+        articles = sorted(articles, key=lambda x: x['title'])
+        return articles
+    except Exception as e:
+        st.error(f"Failed to fetch articles from GitHub: {e}")
+        return []
+
+
 ### ---------- ELO ----------
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
@@ -595,44 +626,15 @@ with tabs[1]:
             st.markdown(f"{neon_text(team, abbr, 20)} – **{elo_val}**", unsafe_allow_html=True)
         st.markdown("---")
 
-# --- Pick Winners Tab ---
 with tabs[2]:
-    nfl_subheader("Weekly Pick’em", "📝")
-    week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
-    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
-    week = st.selectbox("Select Week", available_weeks, key="week_picks")
-    games = sched_df.loc[(week_series_num == week).fillna(False)]
-    picks = {}
-    for _, row in games.iterrows():
-        t_home, t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
-        abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
-        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([3, 2, 3])
-        with c1:
-            safe_logo(abbr_away, 80)
-            st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
-        with c2:
-            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
-        with c3:
-            safe_logo(abbr_home, 80)
-            st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
-        choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
-        picks[f"{t_away} @ {t_home}"] = choice
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Optionally: allow download/export of picks to Excel sheet called "Picks" matching schedule format.
-    if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
-        try:
-            # Attach picks to a dataframe and save to same Excel file
-            picks_df = pd.DataFrame([
-                {"matchup": k, "pick": v} for k, v in picks.items()
-            ])
-            # read existing file and write picks sheet
-            with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                picks_df.to_excel(writer, sheet_name="Picks", index=False)
-            st.success("Picks saved to Excel.")
-        except Exception as e:
-            st.error(f"Failed to save picks: {e}")
+    st.header("NFL Articles from GitHub")
+    articles = fetch_github_articles()
+    if not articles:
+        st.info("No articles found in the GitHub repo's articles folder.")
+    for a in articles:
+        with st.expander(a['title']):
+            st.markdown(a['content'])
+            st.markdown(f"[View on GitHub]({a['url']})")
 
 # --- Scoreboard Tab ---
 with tabs[3]:
