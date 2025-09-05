@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
+from docx import Document
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -165,34 +166,37 @@ def set_background(image_path="Shield.png"):
 
 set_background("Shield.png")
 
-# ---------- GITHUB ARTICLES ----------
+
+
 GITHUB_USER = "mackaveli07"  # replace with your GitHub username
-GITHUB_REPO = "DratingsClone"      # replace with your repo name
-GITHUB_PATH = "articles"       # folder containing your markdown articles
+GITHUB_REPO = "Masterpimp+1"      # replace with your repo name
+GITHUB_PATH = "articles"       # folder containing your Word docs
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
 
 @st.cache_data(ttl=3600)
-def fetch_github_articles():
+def fetch_github_word_articles():
     try:
         resp = requests.get(GITHUB_API, timeout=8)
         resp.raise_for_status()
         files = resp.json()
         articles = []
         for f in files:
-            # Only pull .md files
-            if f['name'].endswith(".md"):
+            if f['name'].endswith(".docx"):
+                # download raw file
                 content_resp = requests.get(f['download_url'], timeout=6)
                 content_resp.raise_for_status()
+                doc_stream = io.BytesIO(content_resp.content)
+                doc = Document(doc_stream)
+                full_text = "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()])
                 articles.append({
-                    "title": f['name'].replace(".md",""),
-                    "content": content_resp.text,
+                    "title": f['name'].replace(".docx",""),
+                    "content": full_text,
                     "url": f['html_url']
                 })
-        # Sort alphabetically
-        articles = sorted(articles, key=lambda x: x['title'])
-        return articles
+        # sort alphabetically
+        return sorted(articles, key=lambda x: x['title'])
     except Exception as e:
-        st.error(f"Failed to fetch articles from GitHub: {e}")
+        st.error(f"Failed to fetch Word articles from GitHub: {e}")
         return []
 
 
