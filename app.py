@@ -630,15 +630,17 @@ with tabs[1]:
             st.markdown(f"{neon_text(team, abbr, 20)} – **{elo_val}**", unsafe_allow_html=True)
         st.markdown("---")
 
+# --- Articles Tab ---
 with tabs[2]:
-    st.header("NFL Articles from GitHub")
-    articles = fetch_github_articles()
+    st.header("NFL Articles from GitHub (Word Docs)")
+    articles = fetch_github_word_articles()
     if not articles:
-        st.info("No articles found in the GitHub repo's articles folder.")
+        st.info("No Word documents found in the GitHub repo's articles folder.")
     for a in articles:
         with st.expander(a['title']):
             st.markdown(a['content'])
             st.markdown(f"[View on GitHub]({a['url']})")
+
 
 # --- Scoreboard Tab ---
 with tabs[3]:
