@@ -166,8 +166,8 @@ def set_background(image_path="Shield.png"):
 set_background("Shield.png")
 
 # ---------- GITHUB ARTICLES ----------
-GITHUB_USER = "your-username"  # replace with your GitHub username
-GITHUB_REPO = "your-repo"      # replace with your repo name
+GITHUB_USER = "mackaveli07  # replace with your GitHub username
+GITHUB_REPO = "DratingsClone"      # replace with your repo name
 GITHUB_PATH = "articles"       # folder containing your markdown articles
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
 
