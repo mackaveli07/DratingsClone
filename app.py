@@ -166,44 +166,6 @@ def set_background(image_path="Shield.png"):
 
 set_background("Shield.png")
 
-GITHUB_USER = "mackaveli07"  # replace with your GitHub username
-GITHUB_REPO = "DratingsClone"      # replace with your repo name
-GITHUB_PATH = "articles"       # folder containing your Word docs
-GITHUB_API = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/contents/{GITHUB_PATH}"
-
-@st.cache_data(ttl=3600)
-def fetch_github_word_articles():
-    articles = []
-    try:
-        resp = requests.get(GITHUB_API, timeout=8)
-        resp.raise_for_status()
-        files = resp.json()
-    except requests.exceptions.RequestException as req_err:
-        st.error(f"GitHub API request failed: {req_err}")
-        return []
-    except ValueError as json_err:
-        st.error(f"Failed to parse JSON from GitHub: {json_err}")
-        return []
-
-    for f in files:
-        if f.get('name','').endswith(".docx"):
-            try:
-                content_resp = requests.get(f['download_url'], timeout=6)
-                content_resp.raise_for_status()
-                doc_stream = io.BytesIO(content_resp.content)
-                doc = Document(doc_stream)
-                full_text = "\n\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-                articles.append({
-                    "title": f['name'].replace(".docx",""),
-                    "content": full_text,
-                    "url": f['html_url']
-                })
-            except requests.exceptions.RequestException as e:
-                st.warning(f"Failed to download {f['name']}: {e}")
-            except Exception as doc_err:
-                st.warning(f"Failed to parse {f['name']}: {doc_err}")
-
-    return sorted(articles, key=lambda x: x['title'])
 
 
 
@@ -639,13 +601,23 @@ with tabs[1]:
 
 # --- Articles Tab ---
 with tabs[2]:
-    st.header("NFL Articles from GitHub (Word Docs)")
-    articles = fetch_github_word_articles()
+    nfl_subheader("NFL Articles", "📚")
+
+    # Initialize GitHub fetcher
+    fetcher = GitHubWordArticlesDynamic(
+        user="your-github-username",
+        repo="your-repo-name",
+        folder="articles"
+    )
+
+    articles = fetcher.fetch_articles()
+
     if not articles:
         st.info("No Word documents found in the GitHub repo's articles folder.")
+
     for a in articles:
-        with st.expander(a['title']):
-            st.markdown(a['content'])
+        with st.expander(a["title"]):
+            st.markdown(a["content"])
             st.markdown(f"[View on GitHub]({a['url']})")
 
 
