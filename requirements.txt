@@ -11,4 +11,4 @@ openpyxl
 webdriver-manager
 playwright>=1.40.0
 pytz 
-docx
+python-docx
