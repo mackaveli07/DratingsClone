@@ -5,7 +5,6 @@ import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
 
-
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
 K = 20
@@ -49,64 +48,6 @@ TEAM_NAME_FIXES = {
     "NY Giants": "New York Giants",
     "Jags": "Jacksonville Jaguars",
 }
-
-
-class GitHubWordArticles:
-    def __init__(self, user, repo, folder):
-        self.user = user
-        self.repo = repo
-        self.folder = folder
-
-    def list_files(self):
-        """List all Word documents (.docx, .doc) in the GitHub folder"""
-        url = f"https://api.github.com/repos/{self.user}/{self.repo}/contents/{self.folder}"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        return [f for f in data if f['name'].endswith(('.docx', '.doc'))]
-
-    def fetch_article(self, file_info):
-        """Download and parse a single Word file"""
-        url = file_info['download_url']
-        filename = file_info['name']
-        ext = filename.split('.')[-1]
-
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        content = None
-
-        # Save file temporarily
-        with open(filename, 'wb') as f:
-            f.write(resp.content)
-
-        if ext == 'docx':
-            doc = Document(filename)
-            content = "\n".join([p.text for p in doc.paragraphs])
-        elif ext == 'doc':
-            content = textract.process(filename).decode('utf-8')
-
-        os.remove(filename)
-
-        return {
-            'title': filename.rsplit('.', 1)[0],
-            'content': content,
-            'url': file_info['html_url']
-        }
-
-    @st.cache_data(ttl=3600)
-    def fetch_articles(self):
-        """Fetch all articles in the folder"""
-        articles = []
-        try:
-            files = self.list_files()
-            for f in files:
-                try:
-                    articles.append(self.fetch_article(f))
-                except Exception as e:
-                    print(f"Error fetching {f['name']}: {e}")
-        except Exception as e:
-            print(f"Error listing files: {e}")
-        return articles
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
@@ -223,9 +164,6 @@ def set_background(image_path="Shield.png"):
         )
 
 set_background("Shield.png")
-
-
-
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
@@ -657,26 +595,44 @@ with tabs[1]:
             st.markdown(f"{neon_text(team, abbr, 20)} – **{elo_val}**", unsafe_allow_html=True)
         st.markdown("---")
 
-# --- Articles Tab ---
+# --- Pick Winners Tab ---
 with tabs[2]:
-    st.header("Published Articles 📰")
-    fetcher = GitHubWordArticles(
-        user="mackaveli07",
-        repo="DratingsClone",
-        folder="articles"
-    )
-    articles = fetcher.fetch_articles()
+    nfl_subheader("Weekly Pick’em", "📝")
+    week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
+    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
+    week = st.selectbox("Select Week", available_weeks, key="week_picks")
+    games = sched_df.loc[(week_series_num == week).fillna(False)]
+    picks = {}
+    for _, row in games.iterrows():
+        t_home, t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
+        abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
+        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([3, 2, 3])
+        with c1:
+            safe_logo(abbr_away, 80)
+            st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
+        with c2:
+            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
+        with c3:
+            safe_logo(abbr_home, 80)
+            st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
+        choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
+        picks[f"{t_away} @ {t_home}"] = choice
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    if not articles:
-        st.info("No articles found in the GitHub repository.")
-    else:
-        for article in articles:
-            st.subheader(article["title"])
-            st.markdown(f"[View on GitHub]({article['url']})")
-            st.write(article["content"])
-            st.markdown("---")
-
-
+    # Optionally: allow download/export of picks to Excel sheet called "Picks" matching schedule format.
+    if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
+        try:
+            # Attach picks to a dataframe and save to same Excel file
+            picks_df = pd.DataFrame([
+                {"matchup": k, "pick": v} for k, v in picks.items()
+            ])
+            # read existing file and write picks sheet
+            with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                picks_df.to_excel(writer, sheet_name="Picks", index=False)
+            st.success("Picks saved to Excel.")
+        except Exception as e:
+            st.error(f"Failed to save picks: {e}")
 
 # --- Scoreboard Tab ---
 with tabs[3]:
