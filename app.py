@@ -293,7 +293,7 @@ def injury_adjustment(players):
 
 ### ---------- WEATHER ----------
 STADIUMS = {
-   nfl_stadiums = {
+   
     "Arizona Cardinals": {
         "stadium": "State Farm Stadium",
         "city": "Glendale",
