@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
-from articles_fetcher import GitHubWordArticlesDynamic
+
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -49,6 +49,64 @@ TEAM_NAME_FIXES = {
     "NY Giants": "New York Giants",
     "Jags": "Jacksonville Jaguars",
 }
+
+
+class GitHubWordArticles:
+    def __init__(self, user, repo, folder):
+        self.user = user
+        self.repo = repo
+        self.folder = folder
+
+    def list_files(self):
+        """List all Word documents (.docx, .doc) in the GitHub folder"""
+        url = f"https://api.github.com/repos/{self.user}/{self.repo}/contents/{self.folder}"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return [f for f in data if f['name'].endswith(('.docx', '.doc'))]
+
+    def fetch_article(self, file_info):
+        """Download and parse a single Word file"""
+        url = file_info['download_url']
+        filename = file_info['name']
+        ext = filename.split('.')[-1]
+
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        content = None
+
+        # Save file temporarily
+        with open(filename, 'wb') as f:
+            f.write(resp.content)
+
+        if ext == 'docx':
+            doc = Document(filename)
+            content = "\n".join([p.text for p in doc.paragraphs])
+        elif ext == 'doc':
+            content = textract.process(filename).decode('utf-8')
+
+        os.remove(filename)
+
+        return {
+            'title': filename.rsplit('.', 1)[0],
+            'content': content,
+            'url': file_info['html_url']
+        }
+
+    @st.cache_data(ttl=3600)
+    def fetch_articles(self):
+        """Fetch all articles in the folder"""
+        articles = []
+        try:
+            files = self.list_files()
+            for f in files:
+                try:
+                    articles.append(self.fetch_article(f))
+                except Exception as e:
+                    print(f"Error fetching {f['name']}: {e}")
+        except Exception as e:
+            print(f"Error listing files: {e}")
+        return articles
 
 ### ---------- HELPERS ----------
 def map_team_name(name):
@@ -601,24 +659,23 @@ with tabs[1]:
 
 # --- Articles Tab ---
 with tabs[2]:
-    nfl_subheader("NFL Articles", "📚")
-
-    # Initialize GitHub fetcher
-    fetcher = GitHubWordArticlesDynamic(
-        user="your-github-username",
-        repo="your-repo-name",
+    st.header("Published Articles 📰")
+    fetcher = GitHubWordArticles(
+        user="mackaveli07",
+        repo="DratingsClone",
         folder="articles"
     )
-
     articles = fetcher.fetch_articles()
 
     if not articles:
-        st.info("No Word documents found in the GitHub repo's articles folder.")
+        st.info("No articles found in the GitHub repository.")
+    else:
+        for article in articles:
+            st.subheader(article["title"])
+            st.markdown(f"[View on GitHub]({article['url']})")
+            st.write(article["content"])
+            st.markdown("---")
 
-    for a in articles:
-        with st.expander(a["title"]):
-            st.markdown(a["content"])
-            st.markdown(f"[View on GitHub]({a['url']})")
 
 
 # --- Scoreboard Tab ---
