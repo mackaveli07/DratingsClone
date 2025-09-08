@@ -260,23 +260,41 @@ ESPN_TEAM_IDS = {
     "PIT":23,"SF":25,"SEA":26,"TB":27,"TEN":10,"WAS":28
 }
 
-def fetch_injuries_espn(team_abbr):
-    team_id = ESPN_TEAM_IDS.get(team_abbr)
-    if not team_id:
-        return []
-    url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
-    try:
-        r = requests.get(url, timeout=6); r.raise_for_status(); data = r.json()
-    except Exception:
-        return []
-    players = []
-    for e in data.get("entries", []):
-        players.append({
-            "name": e.get("athlete",{}).get("displayName"),
-            "position": e.get("position",{}).get("abbreviation"),
-            "status": e.get("status",{}).get("type","")
-        })
-    return players
+def fetch_nfl_injuries():
+    """
+    Fetch current NFL injury reports from ESPN's public API.
+    Returns a pandas DataFrame with team, player, position, injury, and status.
+    """
+    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
+    resp = requests.get(url)
+
+    if resp.status_code != 200:
+        print("Error fetching injuries:", resp.status_code)
+        return pd.DataFrame()
+
+    data = resp.json()
+    all_injuries = []
+
+    for team in data.get("teams", []):
+        team_name = team.get("team", {}).get("displayName", "")
+        for injury in team.get("injuries", []):
+            player = injury.get("athlete", {}).get("displayName", "")
+            position = injury.get("athlete", {}).get("position", {}).get("abbreviation", "")
+            injury_type = injury.get("injuryStatus", "")
+            details = injury.get("details", "")
+            status = injury.get("status", "")
+
+            all_injuries.append({
+                "team": team_name,
+                "player": player,
+                "pos": position,
+                "injury": details if details else injury_type,
+                "status": status
+            })
+
+    df = pd.DataFrame(all_injuries)
+    return df
+
 
 def injury_adjustment(players):
     penalty = 0
