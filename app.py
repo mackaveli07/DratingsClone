@@ -1,9 +1,11 @@
-# NFL Elo Projections App — full rebuild with Kelly & per-game market odds
+# app.py
+# NFL Elo Projections App — Full rebuild with Kelly & Prediction Tracking (no Articles tab)
 import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
+from sklearn.metrics import brier_score_loss
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -14,7 +16,6 @@ EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
 
-# default if user doesn't change in sidebar
 DEFAULT_BANKROLL = 50
 
 NFL_FULL_NAMES = {
@@ -89,8 +90,8 @@ def safe_logo(abbr, width=64):
             unsafe_allow_html=True,
         )
 
-def neon_text(text, abbr, size=24):
-    color = TEAM_COLORS.get(abbr, "#39ff14")
+def neon_text(text, abbr=None, size=24):
+    color = TEAM_COLORS.get(abbr, "#39ff14") if abbr else "#39ff14"
     return f"""
     <span style="
         color: {color};
@@ -119,7 +120,6 @@ def set_background(image_path="Shield.png"):
                 background-size: cover;
                 color: white;
             }}
-
             /* Frosted glass cards */
             .card {{
                 background: rgba(30,30,30,0.6);
@@ -129,34 +129,16 @@ def set_background(image_path="Shield.png"):
                 margin: 20px 0;
                 box-shadow: 0 8px 25px rgba(0,0,0,0.4);
             }}
-
-            /* Mobile responsiveness */
             @media (max-width: 768px) {{
-                h1, h2, h3, h4, h5, h6 {{
-                    font-size: 90% !important;
-                }}
-                .card {{
-                    padding: 14px !important;
-                    margin: 12px 0 !important;
-                }}
-                img {{
-                    max-width: 80px !important;
-                    height: auto !important;
-                }}
-                .stMarkdown p {{
-                    font-size: 14px !important;
-                }}
+                h1,h2,h3,h4,h5,h6 {{ font-size:90% !important; }}
+                .card {{ padding:14px !important; margin:12px 0 !important; }}
+                img {{ max-width:80px !important; height:auto !important; }}
+                .stMarkdown p {{ font-size:14px !important; }}
             }}
             @media (max-width: 480px) {{
-                .card {{
-                    padding: 10px !important;
-                }}
-                h1, h2, h3 {{
-                    font-size: 80% !important;
-                }}
-                img {{
-                    max-width: 60px !important;
-                }}
+                .card {{ padding:10px !important; }}
+                h1,h2,h3 {{ font-size:80% !important; }}
+                img {{ max-width:60px !important; }}
             }}
             </style>
             """,
@@ -385,8 +367,7 @@ def nfl_header(title):
         r"""
         <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
                     padding: 20px; border-radius: 15px; text-align:center; display:flex; 
-                    align-items:center; justify-content:center; gap:16px;'>
-            """ + logo_html + f"""
+                    align-items:center; justify-content:center; gap:16px;'>""" + logo_html + f"""
             <h1 style='color:white; margin:0; font-size:42px;'>{title}</h1>
             {logo_html}
         </div>
@@ -400,8 +381,7 @@ def nfl_subheader(text, icon="📊"):
         r"""
         <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
                     padding: 12px; border-radius: 12px; text-align:center; display:flex; 
-                    align-items:center; justify-content:center; gap:10px;'>
-        """ + logo_html + f"""
+                    align-items:center; justify-content:center; gap:10px;'>""" + logo_html + f"""
             <h2 style='color:white; margin:0;'>{icon} {text}</h2>
             {logo_html}
         </div>
@@ -411,21 +391,96 @@ def nfl_subheader(text, icon="📊"):
 
 ### ---------- KELLY BANKROLL MANAGEMENT ----------
 def kelly_fraction(win_prob, odds_decimal):
-    """
-    Kelly Criterion:
-      f* = (bp - q) / b, where b = odds_decimal - 1, p = win_prob, q = 1-p
-    Returns fraction of bankroll to bet (>= 0).
-    """
     b = odds_decimal - 1 if odds_decimal else 0
     p = max(min(win_prob, 1), 0)
     q = 1 - p
     f = (b * p - q) / b if b > 0 else 0
     return max(f, 0)
 
-def implied_odds_from_prob(prob):
-    return 1 / prob if prob and prob > 0 else None
+### ---------- PREDICTION ACCURACY (detailed) ----------
+@st.cache_data(ttl=3600)
+def compute_detailed_accuracy(hist_df, elo_ratings):
+    y_true, y_prob, correct, total = [], [], 0, 0
+    per_team_stats = defaultdict(lambda: {"correct":0,"total":0})
+    weekly_stats = defaultdict(lambda: {"correct":0,"total":0})
+    home_stats = {"correct":0,"total":0}
+    away_stats = {"correct":0,"total":0}
 
-### ---------- MAIN ----------
+    for _, row in hist_df.iterrows():
+        try:
+            t1 = map_team_name(row.get("team1"))
+            t2 = map_team_name(row.get("team2"))
+            score1 = row.get("score1", 0) or 0
+            score2 = row.get("score2", 0) or 0
+            week = row.get("week", None)
+
+            e1 = elo_ratings.get(t1, BASE_ELO)
+            e2 = elo_ratings.get(t2, BASE_ELO)
+            prob1 = expected_score(e1 + HOME_ADVANTAGE, e2)
+
+            y_prob.append(prob1)
+            y_true.append(1 if score1 > score2 else 0)
+
+            predicted_winner = t1 if prob1 > 0.5 else t2
+            actual_winner = t1 if score1 > score2 else t2
+            if predicted_winner == actual_winner:
+                correct += 1
+            total += 1
+
+            for team, won in [(t1, score1 > score2), (t2, score2 > score1)]:
+                per_team_stats[team]["total"] += 1
+                if (predicted_winner == team and won) or (predicted_winner != team and not won):
+                    per_team_stats[team]["correct"] += 1
+
+            if week is not None:
+                weekly_stats[week]["total"] += 1
+                if predicted_winner == actual_winner:
+                    weekly_stats[week]["correct"] += 1
+
+            home_team = t2
+            away_team = t1
+            home_stats["total"] += 1
+            away_stats["total"] += 1
+            if actual_winner == home_team:
+                home_stats["correct"] += 1
+            else:
+                away_stats["correct"] += 1
+        except Exception:
+            # skip bad rows
+            continue
+
+    overall_accuracy = correct / total if total else 0
+    brier = brier_score_loss(y_true, y_prob) if total else 1.0
+    per_team_accuracy = {team: stats["correct"]/stats["total"] if stats["total"] else 0 for team, stats in per_team_stats.items()}
+    weekly_accuracy = {week: stats["correct"]/stats["total"] if stats["total"] else 0 for week, stats in weekly_stats.items()}
+    home_accuracy = home_stats["correct"]/home_stats["total"] if home_stats["total"] else 0
+    away_accuracy = away_stats["correct"]/away_stats["total"] if away_stats["total"] else 0
+
+    return {
+        "overall_accuracy": overall_accuracy,
+        "brier_score": brier,
+        "per_team_accuracy": per_team_accuracy,
+        "weekly_accuracy": weekly_accuracy,
+        "home_accuracy": home_accuracy,
+        "away_accuracy": away_accuracy
+    }
+
+### ---------- LOAD GAMES (cached) ----------
+@st.cache_data(ttl=600)
+def load_games(file=EXCEL_FILE):
+    if os.path.exists(file):
+        try:
+            hist_df = pd.read_excel(file, sheet_name=HIST_SHEET)
+        except Exception:
+            hist_df = pd.DataFrame()
+        try:
+            sched_df = pd.read_excel(file, sheet_name=SCHEDULE_SHEET)
+        except Exception:
+            sched_df = pd.DataFrame()
+        return hist_df, sched_df
+    return pd.DataFrame(), pd.DataFrame()
+
+# ---------- MAIN ----------
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
@@ -434,132 +489,132 @@ st.sidebar.header("Bankroll / Settings")
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1.0, value=float(DEFAULT_BANKROLL), step=1.0, format="%.2f")
 st.sidebar.markdown("**Kelly stakes use the bankroll value above.**")
 
-# Load data
-try:
-    hist_df = pd.read_excel(EXCEL_FILE, sheet_name=HIST_SHEET)
-    sched_df = pd.read_excel(EXCEL_FILE, sheet_name=SCHEDULE_SHEET)
-except Exception as e:
-    st.error(f"Error loading Excel: {e}")
-    st.stop()
+hist_df, sched_df = load_games()
+ratings = run_elo_pipeline(hist_df) if not hist_df.empty else {}
+acc_stats = compute_detailed_accuracy(hist_df, ratings) if not hist_df.empty else {
+    "overall_accuracy":0,"brier_score":1.0,"per_team_accuracy":{}, "weekly_accuracy":{}, "home_accuracy":0, "away_accuracy":0
+}
 
-NFL_AVG_TOTALS, overall_avg, alpha = {}, 44, 50
-if {"score1","score2","season"} <= set(hist_df.columns):
-    hist_df["total_points"] = (hist_df["score1"].fillna(0) + hist_df["score2"].fillna(0))
-    overall_avg = float(hist_df["total_points"].mean()) if len(hist_df) else 44.0
-    grouped = hist_df.groupby("season")["total_points"].agg(["mean","count"])
-    for s, r in grouped.iterrows():
-        NFL_AVG_TOTALS[int(s)] = (r["mean"]*r["count"] + overall_avg*alpha) / (r["count"] + alpha)
+# Show some analytics in sidebar
+with st.sidebar.expander("Prediction Accuracy"):
+    st.metric("Overall Win %", f"{acc_stats['overall_accuracy']:.1%}")
+    st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
+    st.metric("Home Win Accuracy", f"{acc_stats['home_accuracy']:.1%}")
+    st.metric("Away Win Accuracy", f"{acc_stats['away_accuracy']:.1%}")
 
-ratings = run_elo_pipeline(hist_df)
-HOME_COL, AWAY_COL = "team2", "team1"
-
-tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard"])
+# Tabs
+tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard", "Prediction Accuracy"])
 
 # --- Matchups Tab ---
 with tabs[0]:
-    week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
-    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
-    if not available_weeks:
-        st.warning("No valid weeks found in schedule.")
-    selected_week = st.selectbox(
-        "Select Week",
-        options=available_weeks,
-        index=max(0, len(available_weeks)-1),
-        key="week_matchups"
-    )
-    mask = (week_series_num == selected_week)
-    week_games = sched_df.loc[mask.fillna(False)]
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.header("Matchups — Predictions & Kelly Stakes")
+    if sched_df.empty:
+        st.warning("Schedule not found in Excel.")
+    else:
+        week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
+        available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
+        if not available_weeks:
+            st.warning("No valid weeks found in schedule.")
+        else:
+            selected_week = st.selectbox("Select Week", options=available_weeks, index=max(0,len(available_weeks)-1), key="week_matchups")
+            mask = (week_series_num == selected_week)
+            week_games = sched_df.loc[mask.fillna(False)]
+            for _, row in week_games.iterrows():
+                team_home = map_team_name(row.get("team2"))
+                team_away = map_team_name(row.get("team1"))
+                abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
 
-    for _, row in week_games.iterrows():
-        team_home = map_team_name(row.get(HOME_COL))
-        team_away = map_team_name(row.get(AWAY_COL))
-        abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
+                home_inj = fetch_injuries_espn(abbr_home) if abbr_home else []
+                away_inj = fetch_injuries_espn(abbr_away) if abbr_away else []
+                kickoff = default_kickoff_unix(row.get("date"))
+                weather = get_weather(team_home, kickoff)
 
-        home_inj = fetch_injuries_espn(abbr_home) if abbr_home else []
-        away_inj = fetch_injuries_espn(abbr_away) if abbr_away else []
-        kickoff = default_kickoff_unix(row.get("date"))
-        weather = get_weather(team_home, kickoff)
+                adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj) + weather_adjustment(weather)
+                adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj) + weather_adjustment(weather)
 
-        adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj) + weather_adjustment(weather)
-        adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj) + weather_adjustment(weather)
+                win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
+                win_prob_away = 1 - win_prob_home
 
-        win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
-        win_prob_away = 1 - win_prob_home
+                col_odds1, col_odds2 = st.columns([1,1])
+                with col_odds1:
+                    odds_away = st.number_input(
+                        f"{team_away} Odds (decimal)",
+                        min_value=1.01, value=2.0, step=0.01,
+                        key=f"odds_away_{team_away}_{team_home}"
+                    )
+                with col_odds2:
+                    odds_home = st.number_input(
+                        f"{team_home} Odds (decimal)",
+                        min_value=1.01, value=2.0, step=0.01,
+                        key=f"odds_home_{team_home}_{team_away}"
+                    )
 
-        # Market odds input (decimal odds) — unique keys per matchup to preserve values
-        col_odds1, col_odds2 = st.columns([1,1])
-        with col_odds1:
-            odds_away = st.number_input(
-                f"{team_away} Odds (decimal)",
-                min_value=1.01, value=2.0, step=0.01,
-                key=f"odds_away_{team_away}_{team_home}"
-            )
-        with col_odds2:
-            odds_home = st.number_input(
-                f"{team_home} Odds (decimal)",
-                min_value=1.01, value=2.0, step=0.01,
-                key=f"odds_home_{team_home}_{team_away}"
-            )
+                kelly_home = kelly_fraction(win_prob_home, odds_home)
+                kelly_away = kelly_fraction(win_prob_away, odds_away)
+                stake_home = kelly_home * bankroll
+                stake_away = kelly_away * bankroll
 
-        # Kelly criterion calculation based on market odds and global bankroll
-        kelly_home = kelly_fraction(win_prob_home, odds_home)
-        kelly_away = kelly_fraction(win_prob_away, odds_away)
-        stake_home = kelly_home * bankroll
-        stake_away = kelly_away * bankroll
+                # Projected score using season totals:
+                NFL_AVG_TOTALS, overall_avg, alpha = {}, 44, 50
+                if {"score1","score2","season"} <= set(hist_df.columns):
+                    hist_df["total_points"] = (hist_df["score1"].fillna(0) + hist_df["score2"].fillna(0))
+                    overall_avg = float(hist_df["total_points"].mean()) if len(hist_df) else 44.0
+                    grouped = hist_df.groupby("season")["total_points"].agg(["mean","count"])
+                    for s, r in grouped.iterrows():
+                        NFL_AVG_TOTALS[int(s)] = (r["mean"]*r["count"] + overall_avg*alpha) / (r["count"] + alpha)
+                season_val = row.get("season")
+                try:
+                    season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
+                except Exception:
+                    season_int = max(NFL_AVG_TOTALS.keys(), default=2025)
+                total_pts = NFL_AVG_TOTALS.get(season_int, overall_avg)
+                proj_home = int(round(win_prob_home * total_pts))
+                proj_away = int(round(win_prob_away * total_pts))
 
-        # Projected score using season-specific totals (fallback to overall_avg)
-        season_val = row.get("season")
-        try:
-            season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
-        except Exception:
-            season_int = max(NFL_AVG_TOTALS.keys(), default=2025)
-        total_pts = NFL_AVG_TOTALS.get(season_int, overall_avg)
-        proj_home = int(round(win_prob_home * total_pts))
-        proj_away = int(round(win_prob_away * total_pts))
+                st.markdown(
+                    "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
+                    "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
+                    unsafe_allow_html=True
+                )
 
-        st.markdown(
-            "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
-            "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
-            unsafe_allow_html=True
-        )
+                col1, col_mid, col2 = st.columns([2, 3, 2])
+                with col1:
+                    safe_logo(abbr_away, 120)
+                    st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_away:.2f} — Kelly: {kelly_away:.2%} — Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
+                with col_mid:
+                    st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
+                    st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
+                with col2:
+                    safe_logo(abbr_home, 120)
+                    st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
 
-        col1, col_mid, col2 = st.columns([2, 3, 2])
-        with col1:
-            safe_logo(abbr_away, 120)
-            st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_away:.2f} — Kelly: {kelly_away:.2%} — Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
-        with col_mid:
-            st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
-        with col2:
-            safe_logo(abbr_home, 120)
-            st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
-            st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
+                with st.expander("Weather Forecast 🌤️"):
+                    if weather:
+                        st.write(weather)
+                    else:
+                        st.caption("No forecast available.")
 
-        with st.expander("Weather Forecast 🌤️"):
-            if weather:
-                st.write(weather)
-            else:
-                st.caption("No forecast available.")
-
-        with st.expander("Injuries 🩺"):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"**{team_away}**")
-                if away_inj:
-                    for p in away_inj: st.write(p)
-                else:
-                    st.caption("No reported injuries.")
-            with c2:
-                st.markdown(f"**{team_home}**")
-                if home_inj:
-                    for p in home_inj: st.write(p)
-                else:
-                    st.caption("No reported injuries.")
-
-        st.markdown("</div>", unsafe_allow_html=True)
+                with st.expander("Injuries 🩺"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"**{team_away}**")
+                        if away_inj:
+                            for p in away_inj: st.write(p)
+                        else:
+                            st.caption("No reported injuries.")
+                    with c2:
+                        st.markdown(f"**{team_home}**")
+                        if home_inj:
+                            for p in home_inj: st.write(p)
+                        else:
+                            st.caption("No reported injuries.")
+                st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # --- Power Rankings Tab ---
 with tabs[1]:
@@ -600,55 +655,50 @@ with tabs[2]:
     nfl_subheader("Weekly Pick’em", "📝")
     week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
     available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
-    week = st.selectbox("Select Week", available_weeks, key="week_picks")
-    games = sched_df.loc[(week_series_num == week).fillna(False)]
-    picks = {}
-    for _, row in games.iterrows():
-        t_home, t_away = map_team_name(row.get(HOME_COL)), map_team_name(row.get(AWAY_COL))
-        abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
-        st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([3, 2, 3])
-        with c1:
-            safe_logo(abbr_away, 80)
-            st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
-        with c2:
-            st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
-        with c3:
-            safe_logo(abbr_home, 80)
-            st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
-        choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
-        picks[f"{t_away} @ {t_home}"] = choice
-        st.markdown("</div>", unsafe_allow_html=True)
+    if available_weeks:
+        week = st.selectbox("Select Week", available_weeks, key="week_picks")
+        games = sched_df.loc[(week_series_num == week).fillna(False)]
+        picks = {}
+        for _, row in games.iterrows():
+            t_home, t_away = map_team_name(row.get("team2")), map_team_name(row.get("team1"))
+            abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
+            st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([3, 2, 3])
+            with c1:
+                safe_logo(abbr_away, 80)
+                st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
+            with c2:
+                st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
+            with c3:
+                safe_logo(abbr_home, 80)
+                st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
+            choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
+            picks[f"{t_away} @ {t_home}"] = choice
+            st.markdown("</div>", unsafe_allow_html=True)
 
-    # Optionally: allow download/export of picks to Excel sheet called "Picks" matching schedule format.
-    if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
-        try:
-            # Attach picks to a dataframe and save to same Excel file
-            picks_df = pd.DataFrame([
-                {"matchup": k, "pick": v} for k, v in picks.items()
-            ])
-            # read existing file and write picks sheet
-            with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                picks_df.to_excel(writer, sheet_name="Picks", index=False)
-            st.success("Picks saved to Excel.")
-        except Exception as e:
-            st.error(f"Failed to save picks: {e}")
+        if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
+            try:
+                picks_df = pd.DataFrame([{"matchup": k, "pick": v} for k, v in picks.items()])
+                with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+                    picks_df.to_excel(writer, sheet_name="Picks", index=False)
+                st.success("Picks saved to Excel.")
+            except Exception as e:
+                st.error(f"Failed to save picks: {e}")
+    else:
+        st.info("Schedule not available for picks.")
 
 # --- Scoreboard Tab ---
 with tabs[3]:
     nfl_subheader("NFL Scoreboard", "🏟️")
     games = fetch_nfl_scores()
-    
     if not games:
         st.info("No NFL games today or scheduled.")
-
     for game in games:
         away, home = game["away"], game["home"]
         state = game.get("state", "pre")
         comp = game.get("competition")
         situation = comp.get("situation", {}) if comp else {}
 
-        # Game status
         status_obj = comp.get("status", {}) if comp else {}
         period = status_obj.get("period")
         clock = status_obj.get("displayClock", "")
@@ -659,20 +709,17 @@ with tabs[3]:
         else:
             status_text = game.get("status", "Scheduled")
 
-        # Drive summary
         possession_id = situation.get("possession", {}).get("id")
         last_play = situation.get("lastPlay", {}).get("text", "")
         desc = situation.get("shortDownDistanceText")
         yard_line = situation.get("yardLine")
         drive_summary = f"{desc} on {yard_line}" if desc else None
 
-        # Highlight winner
         score_home = int(home.get("score", 0))
         score_away = int(away.get("score", 0))
         highlight_home = state == "post" and score_home > score_away
         highlight_away = state == "post" and score_away > score_home
 
-        # --- Game Card Container with black background ---
         st.markdown(
             "<div style='background: #000000; backdrop-filter: blur(16px); border-radius:24px; "
             "padding:20px; margin:16px 0; box-shadow:0 10px 30px rgba(0,0,0,0.5); "
@@ -681,10 +728,7 @@ with tabs[3]:
         )
 
         col1, col2, col3 = st.columns([3, 2, 3])
-
-        # --- Away Team ---
         with col1:
-            # ESPN provides logos as URLs in scoreboard; use them if present
             try:
                 logo_url = away['team'].get('logo')
                 if logo_url:
@@ -700,11 +744,9 @@ with tabs[3]:
                 unsafe_allow_html=True
             )
 
-        # --- Status Column ---
         with col2:
             st.markdown(f"<h3 style='text-align:center; color:#e5e7eb;'>{status_text}</h3>", unsafe_allow_html=True)
 
-        # --- Home Team ---
         with col3:
             try:
                 logo_url = home['team'].get('logo')
@@ -721,7 +763,6 @@ with tabs[3]:
                 unsafe_allow_html=True
             )
 
-        # --- Drive Summary / Last Play ---
         if drive_summary or last_play:
             st.markdown(
                 "<div style='background: rgba(20,20,20,0.7); border-radius:12px; padding:8px; "
@@ -735,3 +776,34 @@ with tabs[3]:
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+# --- Prediction Accuracy Tab ---
+with tabs[4]:
+    st.header("Prediction Accuracy")
+    st.markdown("Overall and breakdowns of Elo prediction performance on historical games.")
+
+    st.subheader("Key Metrics")
+    st.metric("Overall Win Accuracy", f"{acc_stats['overall_accuracy']:.1%}")
+    st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
+
+    st.subheader("Home / Away Accuracy")
+    st.write(f"Home accuracy: {acc_stats['home_accuracy']:.1%}")
+    st.write(f"Away accuracy: {acc_stats['away_accuracy']:.1%}")
+
+    st.subheader("Per-Team Accuracy")
+    per_team = acc_stats.get("per_team_accuracy", {})
+    if per_team:
+        per_team_df = pd.DataFrame.from_dict(per_team, orient="index", columns=["Accuracy"]).sort_values("Accuracy", ascending=False)
+        per_team_df.index.name = "Team"
+        st.dataframe(per_team_df.style.format({"Accuracy":"{:.1%}"}))
+    else:
+        st.info("No per-team accuracy data available.")
+
+    st.subheader("Weekly Accuracy Trend")
+    weekly = acc_stats.get("weekly_accuracy", {})
+    if weekly:
+        weekly_df = pd.DataFrame.from_dict(weekly, orient="index", columns=["Accuracy"]).sort_index()
+        weekly_df.index.name = "Week"
+        st.line_chart(weekly_df)
+    else:
+        st.info("No weekly accuracy data available.")
