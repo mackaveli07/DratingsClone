@@ -12,3 +12,4 @@ webdriver-manager
 playwright>=1.40.0
 pytz 
 python-docx
+textract
