@@ -293,12 +293,231 @@ def injury_adjustment(players):
 
 ### ---------- WEATHER ----------
 STADIUMS = {
-    "Buffalo Bills":{"lat":42.7738,"lon":-78.7868},
-    "Green Bay Packers":{"lat":44.5013,"lon":-88.0622},
-    "Chicago Bears":{"lat":41.8625,"lon":-87.6166},
-    "Kansas City Chiefs":{"lat":39.0490,"lon":-94.4840},
-    "New England Patriots":{"lat":42.0909,"lon":-71.2643},
-    "Philadelphia Eagles":{"lat":39.9008,"lon":-75.1675}
+   nfl_stadiums = {
+    "Arizona Cardinals": {
+        "stadium": "State Farm Stadium",
+        "city": "Glendale",
+        "state": "Arizona",
+        "lat": 33.5276,
+        "lon": -112.2626
+    },
+    "Atlanta Falcons": {
+        "stadium": "Mercedes-Benz Stadium",
+        "city": "Atlanta",
+        "state": "Georgia",
+        "lat": 33.7554,
+        "lon": -84.4008
+    },
+    "Baltimore Ravens": {
+        "stadium": "M&T Bank Stadium",
+        "city": "Baltimore",
+        "state": "Maryland",
+        "lat": 39.2780,
+        "lon": -76.6227
+    },
+    "Buffalo Bills": {
+        "stadium": "Highmark Stadium",
+        "city": "Orchard Park",
+        "state": "New York",
+        "lat": 42.7738,
+        "lon": -78.7869
+    },
+    "Carolina Panthers": {
+        "stadium": "Bank of America Stadium",
+        "city": "Charlotte",
+        "state": "North Carolina",
+        "lat": 35.2251,
+        "lon": -80.8531
+    },
+    "Chicago Bears": {
+        "stadium": "Soldier Field",
+        "city": "Chicago",
+        "state": "Illinois",
+        "lat": 41.8623,
+        "lon": -87.6167
+    },
+    "Cincinnati Bengals": {
+        "stadium": "Paycor Stadium",
+        "city": "Cincinnati",
+        "state": "Ohio",
+        "lat": 39.0954,
+        "lon": -84.5161
+    },
+    "Cleveland Browns": {
+        "stadium": "Cleveland Browns Stadium",
+        "city": "Cleveland",
+        "state": "Ohio",
+        "lat": 41.5061,
+        "lon": -81.6995
+    },
+    "Dallas Cowboys": {
+        "stadium": "AT&T Stadium",
+        "city": "Arlington",
+        "state": "Texas",
+        "lat": 32.7473,
+        "lon": -97.0945
+    },
+    "Denver Broncos": {
+        "stadium": "Empower Field at Mile High",
+        "city": "Denver",
+        "state": "Colorado",
+        "lat": 39.7439,
+        "lon": -105.0201
+    },
+    "Detroit Lions": {
+        "stadium": "Ford Field",
+        "city": "Detroit",
+        "state": "Michigan",
+        "lat": 42.3400,
+        "lon": -83.0456
+    },
+    "Green Bay Packers": {
+        "stadium": "Lambeau Field",
+        "city": "Green Bay",
+        "state": "Wisconsin",
+        "lat": 44.5013,
+        "lon": -88.0622
+    },
+    "Houston Texans": {
+        "stadium": "NRG Stadium",
+        "city": "Houston",
+        "state": "Texas",
+        "lat": 29.6847,
+        "lon": -95.4107
+    },
+    "Indianapolis Colts": {
+        "stadium": "Lucas Oil Stadium",
+        "city": "Indianapolis",
+        "state": "Indiana",
+        "lat": 39.7601,
+        "lon": -86.1639
+    },
+    "Jacksonville Jaguars": {
+        "stadium": "EverBank Stadium",
+        "city": "Jacksonville",
+        "state": "Florida",
+        "lat": 30.3240,
+        "lon": -81.6376
+    },
+    "Kansas City Chiefs": {
+        "stadium": "GEHA Field at Arrowhead Stadium",
+        "city": "Kansas City",
+        "state": "Missouri",
+        "lat": 39.0490,
+        "lon": -94.4839
+    },
+    "Las Vegas Raiders": {
+        "stadium": "Allegiant Stadium",
+        "city": "Paradise",
+        "state": "Nevada",
+        "lat": 36.0909,
+        "lon": -115.1830
+    },
+    "Los Angeles Chargers": {
+        "stadium": "SoFi Stadium",
+        "city": "Inglewood",
+        "state": "California",
+        "lat": 33.9535,
+        "lon": -118.3387
+    },
+    "Los Angeles Rams": {
+        "stadium": "SoFi Stadium",
+        "city": "Inglewood",
+        "state": "California",
+        "lat": 33.9535,
+        "lon": -118.3387
+    },
+    "Miami Dolphins": {
+        "stadium": "Hard Rock Stadium",
+        "city": "Miami Gardens",
+        "state": "Florida",
+        "lat": 25.9580,
+        "lon": -80.2389
+    },
+    "Minnesota Vikings": {
+        "stadium": "U.S. Bank Stadium",
+        "city": "Minneapolis",
+        "state": "Minnesota",
+        "lat": 44.9737,
+        "lon": -93.2570
+    },
+    "New England Patriots": {
+        "stadium": "Gillette Stadium",
+        "city": "Foxborough",
+        "state": "Massachusetts",
+        "lat": 42.0909,
+        "lon": -71.2643
+    },
+    "New Orleans Saints": {
+        "stadium": "Caesars Superdome",
+        "city": "New Orleans",
+        "state": "Louisiana",
+        "lat": 29.9509,
+        "lon": -90.0815
+    },
+    "New York Giants": {
+        "stadium": "MetLife Stadium",
+        "city": "East Rutherford",
+        "state": "New Jersey",
+        "lat": 40.8135,
+        "lon": -74.0745
+    },
+    "New York Jets": {
+        "stadium": "MetLife Stadium",
+        "city": "East Rutherford",
+        "state": "New Jersey",
+        "lat": 40.8135,
+        "lon": -74.0745
+    },
+    "Philadelphia Eagles": {
+        "stadium": "Lincoln Financial Field",
+        "city": "Philadelphia",
+        "state": "Pennsylvania",
+        "lat": 39.9008,
+        "lon": -75.1675
+    },
+    "Pittsburgh Steelers": {
+        "stadium": "Acrisure Stadium",
+        "city": "Pittsburgh",
+        "state": "Pennsylvania",
+        "lat": 40.4468,
+        "lon": -80.0158
+    },
+    "San Francisco 49ers": {
+        "stadium": "Levi's Stadium",
+        "city": "Santa Clara",
+        "state": "California",
+        "lat": 37.4030,
+        "lon": -121.9700
+    },
+    "Seattle Seahawks": {
+        "stadium": "Lumen Field",
+        "city": "Seattle",
+        "state": "Washington",
+        "lat": 47.5952,
+        "lon": -122.3316
+    },
+    "Tampa Bay Buccaneers": {
+        "stadium": "Raymond James Stadium",
+        "city": "Tampa",
+        "state": "Florida",
+        "lat": 27.9759,
+        "lon": -82.5033
+    },
+    "Tennessee Titans": {
+        "stadium": "Nissan Stadium",
+        "city": "Nashville",
+        "state": "Tennessee",
+        "lat": 36.1665,
+        "lon": -86.7713
+    },
+    "Washington Commanders": {
+        "stadium": "Commanders Field",
+        "city": "Landover",
+        "state": "Maryland",
+        "lat": 38.9077,
+        "lon": -76.8645
+    }
 }
 
 OWM_API_KEY = os.getenv("OWM_API_KEY", "")
