@@ -683,13 +683,13 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
 
     if os.path.exists(file):
         workbook = load_workbook(file)
+        if "Picks" in workbook.sheetnames:
+            del workbook["Picks"]
+        sheet = workbook.create_sheet("Picks")
     else:
         workbook = Workbook()
-        workbook.remove(workbook.active)
-
-    if "Picks" in workbook.sheetnames:
-        del workbook["Picks"]
-    sheet = workbook.create_sheet("Picks")
+        sheet = workbook.active
+        sheet.title = "Picks"
     for row in dataframe_to_rows(out, index=False, header=True):
         sheet.append(row)
     workbook.save(file)
@@ -1229,10 +1229,12 @@ with tabs[4]:
         week_wins = int((week_results["status"] == "correct").sum())
         week_losses = int((week_results["status"] == "wrong").sum())
         week_pending = int((week_results["status"] == "pending").sum())
+        week_pushes = int((week_results["status"] == "tie/push").sum())
 
         st.markdown(
             f"**Week {review_week} Record:** {week_wins}-{week_losses}"
             + (f" (Pending: {week_pending})" if week_pending else "")
+            + (f" (Pushes: {week_pushes})" if week_pushes else "")
         )
 
         season_final = graded_picks[graded_picks["status"].isin(["correct", "wrong"])]
