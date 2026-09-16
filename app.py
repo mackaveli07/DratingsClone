@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 from contextlib import contextmanager
-import os, base64, requests, datetime, pytz, math, time
+import os, base64, requests, datetime, pytz, math, time, html
 from openpyxl import load_workbook, Workbook
 from sklearn.metrics import brier_score_loss
 try:
@@ -98,18 +98,21 @@ def safe_logo(abbr, width=64):
 
 def neon_text(text, abbr=None, size=24):
     color = TEAM_COLORS.get(abbr, "#39ff14") if abbr else "#39ff14"
+    safe_text = html.escape(str(text))
     return f"""
     <span style="
-        color: {color};
+        color: #f8fafc;
         font-size: {size}px;
-        font-weight: bold;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        line-height: 1.15;
+        -webkit-text-stroke: 1px {color};
         text-shadow:
-            0 0 5px {color},
-            0 0 10px {color},
-            0 0 20px {color},
-            0 0 40px {color},
-            0 0 80px {color};
-    ">{text}</span>
+            0 0 2px rgba(15, 23, 42, 0.95),
+            0 0 8px {color},
+            0 0 18px {color},
+            0 0 30px {color};
+    ">{safe_text}</span>
     """
 
 # --- Set App Background ---
