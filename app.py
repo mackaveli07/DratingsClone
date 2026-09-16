@@ -6,7 +6,6 @@ import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
 from openpyxl import load_workbook, Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
 from sklearn.metrics import brier_score_loss
 
 ### ---------- CONFIG ----------
@@ -673,6 +672,9 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     if not existing.empty:
         existing["week"] = pd.to_numeric(existing["week"], errors="coerce")
         existing["matchup"] = existing["matchup"].apply(normalize_matchup_value)
+        existing["pick"] = existing["pick"].apply(map_team_name)
+        existing = existing.dropna(subset=["week", "matchup", "pick"])
+        existing["week"] = existing["week"].astype(int)
         existing = existing[~(
             (existing["week"] == week_int) &
             (existing["matchup"].isin(new_rows["matchup"]))
@@ -684,14 +686,21 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     if os.path.exists(file):
         workbook = load_workbook(file)
         if "Picks" in workbook.sheetnames:
-            del workbook["Picks"]
-        sheet = workbook.create_sheet("Picks")
+            sheet = workbook["Picks"]
+        else:
+            sheet = workbook.create_sheet("Picks")
     else:
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Picks"
-    for row in dataframe_to_rows(out, index=False, header=True):
-        sheet.append(row)
+
+    if sheet.max_row and sheet.max_row > 0:
+        sheet.delete_rows(1, sheet.max_row)
+    for col_idx, col_name in enumerate(columns, start=1):
+        sheet.cell(row=1, column=col_idx, value=col_name)
+    for row_idx, row in enumerate(out.itertuples(index=False, name=None), start=2):
+        for col_idx, value in enumerate(row, start=1):
+            sheet.cell(row=row_idx, column=col_idx, value=value)
     workbook.save(file)
 
     load_saved_picks.clear()
