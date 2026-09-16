@@ -721,7 +721,17 @@ def build_actual_results_by_week(hist_df):
         home_team = map_team_name(row.get("team2"))
         score1 = pd.to_numeric(row.get("score1"), errors="coerce")
         score2 = pd.to_numeric(row.get("score2"), errors="coerce")
-        is_final = pd.notna(score1) and pd.notna(score2)
+        score_complete = pd.notna(score1) and pd.notna(score2)
+        status_raw = row.get("status", row.get("game_status", row.get("state", None)))
+        status_text = str(status_raw).strip().lower() if pd.notna(status_raw) else ""
+        final_markers = ["final", "post", "complete", "completed"]
+        pending_markers = ["pre", "sched", "in progress", "live", "halftime", "quarter", "q1", "q2", "q3", "q4", "ot"]
+        if status_text and any(marker in status_text for marker in final_markers):
+            is_final = True
+        elif status_text and any(marker in status_text for marker in pending_markers):
+            is_final = False
+        else:
+            is_final = score_complete
         winner = None
         if is_final:
             if score1 > score2:
