@@ -644,8 +644,10 @@ def _read_saved_picks_from_excel(file=EXCEL_FILE):
         return pd.DataFrame(columns=columns)
     try:
         df = pd.read_excel(file, sheet_name="Picks")
-    except Exception:
-        return pd.DataFrame(columns=columns)
+    except ValueError as e:
+        if "Worksheet named 'Picks' not found" in str(e):
+            return pd.DataFrame(columns=columns)
+        raise
     for col in columns:
         if col not in df.columns:
             df[col] = np.nan
@@ -768,11 +770,21 @@ def build_actual_results_by_week(hist_df):
         score_complete = pd.notna(score1) and pd.notna(score2)
         status_raw = row.get("status", row.get("game_status", row.get("state", None)))
         status_text = str(status_raw).strip().lower() if pd.notna(status_raw) else ""
-        final_markers = ["final", "post", "complete", "completed"]
-        pending_markers = ["pre", "sched", "in progress", "live", "halftime", "quarter", "q1", "q2", "q3", "q4", "ot"]
-        if status_text and any(marker in status_text for marker in final_markers):
+        normalized_status = " ".join(status_text.replace("-", " ").replace("/", " ").split())
+        status_tokens = set(normalized_status.split()) if normalized_status else set()
+        if "postponed" in status_tokens:
+            is_final = False
+        elif "final" in status_tokens or {"complete", "completed"} & status_tokens or normalized_status == "post":
             is_final = True
-        elif status_text and any(marker in status_text for marker in pending_markers):
+        elif (
+            normalized_status.startswith("q")
+            or "live" in status_tokens
+            or "halftime" in status_tokens
+            or "scheduled" in status_tokens
+            or "pregame" in status_tokens
+            or "pre" in status_tokens
+            or ("in" in status_tokens and "progress" in status_tokens)
+        ):
             is_final = False
         else:
             is_final = score_complete
@@ -1108,7 +1120,11 @@ with tabs[2]:
     if available_weeks:
         week = st.selectbox("Select Week", available_weeks, key="week_picks")
         games = sched_df.loc[(week_series_num == week).fillna(False)]
-        saved_picks_df = load_saved_picks()
+        try:
+            saved_picks_df = load_saved_picks()
+        except Exception:
+            saved_picks_df = pd.DataFrame(columns=["week", "matchup", "pick", "timestamp"])
+            st.warning("Could not read saved picks. You can still make picks and save again.")
         existing_week_picks = {}
         if not saved_picks_df.empty:
             week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)].copy()
@@ -1273,7 +1289,11 @@ with tabs[4]:
         st.info("No weekly accuracy data available.")
 
     st.subheader("Your Pick Results")
-    saved_picks = load_saved_picks()
+    try:
+        saved_picks = load_saved_picks()
+    except Exception:
+        saved_picks = pd.DataFrame(columns=["week", "matchup", "pick", "timestamp"])
+        st.warning("Could not read saved picks for review.")
     actual_results = build_actual_results_by_week(hist_df)
     graded_picks = grade_picks(saved_picks, actual_results)
 
