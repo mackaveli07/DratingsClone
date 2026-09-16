@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
+from openpyxl import load_workbook, Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
 from sklearn.metrics import brier_score_loss
 
 ### ---------- CONFIG ----------
@@ -680,11 +682,17 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
 
     if os.path.exists(file):
-        with pd.ExcelWriter(file, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-            out.to_excel(writer, sheet_name="Picks", index=False)
+        workbook = load_workbook(file)
     else:
-        with pd.ExcelWriter(file, engine="openpyxl", mode="w") as writer:
-            out.to_excel(writer, sheet_name="Picks", index=False)
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+
+    if "Picks" in workbook.sheetnames:
+        del workbook["Picks"]
+    sheet = workbook.create_sheet("Picks")
+    for row in dataframe_to_rows(out, index=False, header=True):
+        sheet.append(row)
+    workbook.save(file)
 
     load_saved_picks.clear()
     return True
@@ -1040,11 +1048,13 @@ with tabs[2]:
         saved_picks_df = load_saved_picks()
         existing_week_picks = {}
         if not saved_picks_df.empty:
-            week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)]
-            existing_week_picks = {
-                normalize_matchup_value(r.get("matchup")): map_team_name(r.get("pick"))
-                for _, r in week_saved.iterrows()
-            }
+            week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)].copy()
+            if not week_saved.empty:
+                week_saved["timestamp_dt"] = pd.to_datetime(week_saved["timestamp"], errors="coerce")
+                week_saved["matchup"] = week_saved["matchup"].apply(normalize_matchup_value)
+                week_saved["pick"] = week_saved["pick"].apply(map_team_name)
+                week_saved = week_saved.sort_values("timestamp_dt").drop_duplicates(subset=["matchup"], keep="last")
+                existing_week_picks = dict(zip(week_saved["matchup"], week_saved["pick"]))
         picks = {}
         for _, row in games.iterrows():
             t_home, t_away = map_team_name(row.get("team2")), map_team_name(row.get("team1"))
