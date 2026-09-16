@@ -7,6 +7,10 @@ from collections import defaultdict
 import os, base64, requests, datetime, pytz, math
 from openpyxl import load_workbook, Workbook
 from sklearn.metrics import brier_score_loss
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
@@ -631,6 +635,9 @@ def normalize_matchup_value(matchup):
 
 @st.cache_data(ttl=600)
 def load_saved_picks(file=EXCEL_FILE):
+    return _read_saved_picks_from_excel(file)
+
+def _read_saved_picks_from_excel(file=EXCEL_FILE):
     columns = ["week", "matchup", "pick", "timestamp"]
     if not os.path.exists(file):
         return pd.DataFrame(columns=columns)
@@ -642,6 +649,27 @@ def load_saved_picks(file=EXCEL_FILE):
         if col not in df.columns:
             df[col] = np.nan
     return df[columns]
+
+def _write_picks_sheet(file, picks_df, columns):
+    if os.path.exists(file):
+        workbook = load_workbook(file)
+        if "Picks" in workbook.sheetnames:
+            sheet = workbook["Picks"]
+        else:
+            sheet = workbook.create_sheet("Picks")
+    else:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Picks"
+
+    if sheet.max_row and sheet.max_row > 0:
+        sheet.delete_rows(1, sheet.max_row)
+    for col_idx, col_name in enumerate(columns, start=1):
+        sheet.cell(row=1, column=col_idx, value=col_name)
+    for row_idx, row in enumerate(picks_df.itertuples(index=False, name=None), start=2):
+        for col_idx, value in enumerate(row, start=1):
+            sheet.cell(row=row_idx, column=col_idx, value=value)
+    workbook.save(file)
 
 def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     columns = ["week", "matchup", "pick", "timestamp"]
@@ -668,40 +696,34 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
         return False
 
     new_rows = pd.DataFrame(rows, columns=columns)
-    existing = load_saved_picks(file).copy()
-    if not existing.empty:
-        existing["week"] = pd.to_numeric(existing["week"], errors="coerce")
-        existing["matchup"] = existing["matchup"].apply(normalize_matchup_value)
-        existing["pick"] = existing["pick"].apply(map_team_name)
-        existing = existing.dropna(subset=["week", "matchup", "pick"])
-        existing["week"] = existing["week"].astype(int)
-        existing = existing[~(
-            (existing["week"] == week_int) &
-            (existing["matchup"].isin(new_rows["matchup"]))
-        )]
 
-    out = pd.concat([existing[columns], new_rows], ignore_index=True)
-    out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
+    def _save_once():
+        existing = _read_saved_picks_from_excel(file).copy()
+        if not existing.empty:
+            existing["week"] = pd.to_numeric(existing["week"], errors="coerce")
+            existing["matchup"] = existing["matchup"].apply(normalize_matchup_value)
+            existing["pick"] = existing["pick"].apply(map_team_name)
+            existing = existing.dropna(subset=["week", "matchup", "pick"])
+            existing["week"] = existing["week"].astype(int)
+            existing = existing[~(
+                (existing["week"] == week_int) &
+                (existing["matchup"].isin(new_rows["matchup"]))
+            )]
 
-    if os.path.exists(file):
-        workbook = load_workbook(file)
-        if "Picks" in workbook.sheetnames:
-            sheet = workbook["Picks"]
-        else:
-            sheet = workbook.create_sheet("Picks")
+        out = pd.concat([existing[columns], new_rows], ignore_index=True)
+        out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
+        _write_picks_sheet(file, out, columns)
+
+    if fcntl:
+        lock_path = f"{file}.lock"
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                _save_once()
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     else:
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "Picks"
-
-    if sheet.max_row and sheet.max_row > 0:
-        sheet.delete_rows(1, sheet.max_row)
-    for col_idx, col_name in enumerate(columns, start=1):
-        sheet.cell(row=1, column=col_idx, value=col_name)
-    for row_idx, row in enumerate(out.itertuples(index=False, name=None), start=2):
-        for col_idx, value in enumerate(row, start=1):
-            sheet.cell(row=row_idx, column=col_idx, value=value)
-    workbook.save(file)
+        _save_once()
 
     load_saved_picks.clear()
     return True
