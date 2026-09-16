@@ -616,6 +616,166 @@ def kelly_fraction(win_prob, odds_decimal):
     f = (b * p - q) / b if b > 0 else 0
     return max(f, 0)
 
+def normalize_matchup_key(away_team, home_team):
+    return f"{map_team_name(away_team)} @ {map_team_name(home_team)}"
+
+def normalize_matchup_value(matchup):
+    if pd.isna(matchup):
+        return None
+    text = str(matchup).strip()
+    parts = [p.strip() for p in text.split("@")]
+    if len(parts) != 2:
+        return text
+    return normalize_matchup_key(parts[0], parts[1])
+
+@st.cache_data(ttl=600)
+def load_saved_picks(file=EXCEL_FILE):
+    columns = ["week", "matchup", "pick", "timestamp"]
+    if not os.path.exists(file):
+        return pd.DataFrame(columns=columns)
+    try:
+        df = pd.read_excel(file, sheet_name="Picks")
+    except Exception:
+        return pd.DataFrame(columns=columns)
+    for col in columns:
+        if col not in df.columns:
+            df[col] = np.nan
+    return df[columns]
+
+def save_week_picks(week, picks_dict, file=EXCEL_FILE):
+    columns = ["week", "matchup", "pick", "timestamp"]
+    try:
+        week_int = int(week)
+    except Exception:
+        return False
+
+    rows = []
+    now_ts = datetime.datetime.now().isoformat(timespec="seconds")
+    for matchup, pick in (picks_dict or {}).items():
+        norm_matchup = normalize_matchup_value(matchup)
+        norm_pick = map_team_name(pick)
+        if not norm_matchup or not norm_pick:
+            continue
+        rows.append({
+            "week": week_int,
+            "matchup": norm_matchup,
+            "pick": norm_pick,
+            "timestamp": now_ts
+        })
+
+    if not rows:
+        return False
+
+    new_rows = pd.DataFrame(rows, columns=columns)
+    existing = load_saved_picks(file).copy()
+    if not existing.empty:
+        existing["week"] = pd.to_numeric(existing["week"], errors="coerce")
+        existing["matchup"] = existing["matchup"].apply(normalize_matchup_value)
+        existing = existing[~(
+            (existing["week"] == week_int) &
+            (existing["matchup"].isin(new_rows["matchup"]))
+        )]
+
+    out = pd.concat([existing[columns], new_rows], ignore_index=True)
+    out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
+
+    if os.path.exists(file):
+        with pd.ExcelWriter(file, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+            out.to_excel(writer, sheet_name="Picks", index=False)
+    else:
+        with pd.ExcelWriter(file, engine="openpyxl", mode="w") as writer:
+            out.to_excel(writer, sheet_name="Picks", index=False)
+
+    load_saved_picks.clear()
+    return True
+
+def build_actual_results_by_week(hist_df):
+    needed = {"week", "team1", "team2", "score1", "score2"}
+    cols = ["week", "matchup", "winner", "is_final"]
+    if hist_df is None or hist_df.empty or not needed.issubset(set(hist_df.columns)):
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for _, row in hist_df.iterrows():
+        week = pd.to_numeric(row.get("week"), errors="coerce")
+        if pd.isna(week):
+            continue
+        away_team = map_team_name(row.get("team1"))
+        home_team = map_team_name(row.get("team2"))
+        score1 = pd.to_numeric(row.get("score1"), errors="coerce")
+        score2 = pd.to_numeric(row.get("score2"), errors="coerce")
+        is_final = pd.notna(score1) and pd.notna(score2)
+        winner = None
+        if is_final:
+            if score1 > score2:
+                winner = away_team
+            elif score2 > score1:
+                winner = home_team
+            else:
+                winner = "TIE"
+        rows.append({
+            "week": int(week),
+            "matchup": normalize_matchup_key(away_team, home_team),
+            "winner": winner,
+            "is_final": bool(is_final)
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(rows, columns=cols).drop_duplicates(subset=["week", "matchup"], keep="last")
+
+def grade_picks(saved_picks_df, results_df):
+    graded_cols = ["week", "matchup", "pick", "timestamp", "winner", "is_final", "status", "result"]
+    if saved_picks_df is None or saved_picks_df.empty:
+        return pd.DataFrame(columns=graded_cols)
+
+    picks = saved_picks_df.copy()
+    for col in ["week", "matchup", "pick", "timestamp"]:
+        if col not in picks.columns:
+            picks[col] = np.nan
+
+    picks["week"] = pd.to_numeric(picks["week"], errors="coerce")
+    picks = picks.dropna(subset=["week", "matchup", "pick"])
+    if picks.empty:
+        return pd.DataFrame(columns=graded_cols)
+
+    picks["week"] = picks["week"].astype(int)
+    picks["matchup"] = picks["matchup"].apply(normalize_matchup_value)
+    picks["pick"] = picks["pick"].apply(map_team_name)
+
+    if results_df is None or results_df.empty:
+        merged = picks.copy()
+        merged["winner"] = None
+        merged["is_final"] = False
+    else:
+        results = results_df.copy()
+        results["week"] = pd.to_numeric(results["week"], errors="coerce")
+        results = results.dropna(subset=["week", "matchup"])
+        results["week"] = results["week"].astype(int)
+        results["matchup"] = results["matchup"].apply(normalize_matchup_value)
+        merged = picks.merge(results[["week", "matchup", "winner", "is_final"]], on=["week", "matchup"], how="left")
+        merged["is_final"] = merged["is_final"].fillna(False)
+
+    merged["status"] = np.where(
+        merged["is_final"] != True,
+        "pending",
+        np.where(
+            merged["winner"] == "TIE",
+            "tie/push",
+            np.where(merged["pick"] == merged["winner"], "correct", "wrong")
+        ),
+    )
+    merged["result"] = np.where(
+        merged["status"] == "correct",
+        "✅ Correct",
+        np.where(
+            merged["status"] == "wrong",
+            "❌ Wrong",
+            np.where(merged["status"] == "tie/push", "➖ Tie/Push", "⏳ Pending"),
+        ),
+    )
+    return merged[graded_cols]
+
 ### ---------- PREDICTION ACCURACY (detailed) ----------
 @st.cache_data(ttl=3600)
 def compute_detailed_accuracy(hist_df, elo_ratings):
@@ -877,10 +1037,22 @@ with tabs[2]:
     if available_weeks:
         week = st.selectbox("Select Week", available_weeks, key="week_picks")
         games = sched_df.loc[(week_series_num == week).fillna(False)]
+        saved_picks_df = load_saved_picks()
+        existing_week_picks = {}
+        if not saved_picks_df.empty:
+            week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)]
+            existing_week_picks = {
+                normalize_matchup_value(r.get("matchup")): map_team_name(r.get("pick"))
+                for _, r in week_saved.iterrows()
+            }
         picks = {}
         for _, row in games.iterrows():
             t_home, t_away = map_team_name(row.get("team2")), map_team_name(row.get("team1"))
             abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
+            matchup_key = normalize_matchup_key(t_away, t_home)
+            default_pick = existing_week_picks.get(matchup_key)
+            options = [t_away, t_home]
+            default_index = options.index(default_pick) if default_pick in options else 0
             st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([3, 2, 3])
             with c1:
@@ -891,16 +1063,16 @@ with tabs[2]:
             with c3:
                 safe_logo(abbr_home, 80)
                 st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
-            choice = st.radio("", [t_away, t_home], horizontal=True, key=f"pick_{t_home}_{t_away}")
-            picks[f"{t_away} @ {t_home}"] = choice
+            choice = st.radio("", options, index=default_index, horizontal=True, key=f"pick_{week}_{t_home}_{t_away}")
+            picks[matchup_key] = map_team_name(choice)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        if st.button("Save Picks to Excel (overwrites 'Picks' sheet)"):
+        if st.button(f"Save Picks for Week {week}"):
             try:
-                picks_df = pd.DataFrame([{"matchup": k, "pick": v} for k, v in picks.items()])
-                with pd.ExcelWriter(EXCEL_FILE, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
-                    picks_df.to_excel(writer, sheet_name="Picks", index=False)
-                st.success("Picks saved to Excel.")
+                if save_week_picks(week, picks):
+                    st.success(f"Picks saved for Week {week}. Re-save anytime to update your picks.")
+                else:
+                    st.warning("No valid picks to save for this week.")
             except Exception as e:
                 st.error(f"Failed to save picks: {e}")
     else:
@@ -1026,3 +1198,38 @@ with tabs[4]:
         st.line_chart(weekly_df)
     else:
         st.info("No weekly accuracy data available.")
+
+    st.subheader("Your Pick Results")
+    saved_picks = load_saved_picks()
+    actual_results = build_actual_results_by_week(hist_df)
+    graded_picks = grade_picks(saved_picks, actual_results)
+
+    if graded_picks.empty:
+        st.info("No saved picks yet.")
+    else:
+        saved_weeks = sorted(graded_picks["week"].dropna().astype(int).unique().tolist())
+        review_week = st.selectbox(
+            "Select Week to Review",
+            options=saved_weeks,
+            index=max(0, len(saved_weeks) - 1),
+            key="review_pick_week"
+        )
+        week_results = graded_picks[graded_picks["week"] == review_week].copy()
+
+        week_wins = int((week_results["status"] == "correct").sum())
+        week_losses = int((week_results["status"] == "wrong").sum())
+        week_pending = int((week_results["status"] == "pending").sum())
+
+        st.markdown(
+            f"**Week {review_week} Record:** {week_wins}-{week_losses}"
+            + (f" (Pending: {week_pending})" if week_pending else "")
+        )
+
+        season_final = graded_picks[graded_picks["status"].isin(["correct", "wrong"])]
+        season_wins = int((season_final["status"] == "correct").sum())
+        season_losses = int((season_final["status"] == "wrong").sum())
+        st.markdown(f"**Season Record (Finalized):** {season_wins}-{season_losses}")
+
+        display_df = week_results[["matchup", "pick", "winner", "result"]].copy()
+        display_df["winner"] = display_df["winner"].fillna("Pending")
+        st.dataframe(display_df, use_container_width=True)
