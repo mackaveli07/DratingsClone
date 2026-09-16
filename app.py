@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+from streamlit_autorefresh import st_autorefresh
 from collections import defaultdict
 from contextlib import contextmanager
 import os, base64, requests, datetime, pytz, math, time, html
@@ -263,12 +264,15 @@ def fetch_nfl_scores():
     return games
 
 ### ---------- INJURIES ----------
+INJURY_CACHE_TTL_SECONDS = 600
+
 ESPN_TEAM_IDS = {
     "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
     "HOU":34,"IND":11,"JAX":30,"KC":12,"LV":13,"LAC":24,"LA":14,"MIA":15,"MIN":16,"NE":17,"NO":18,"NYG":19,"NYJ":20,"PHI":21,
     "PIT":23,"SF":25,"SEA":26,"TB":27,"TEN":10,"WAS":28
 }
 
+@st.cache_data(ttl=INJURY_CACHE_TTL_SECONDS)
 def fetch_injuries_espn(team_abbr):
     team_id = ESPN_TEAM_IDS.get(team_abbr)
     if not team_id:
@@ -949,10 +953,16 @@ def load_games(file=EXCEL_FILE):
 st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
+st_autorefresh(interval=INJURY_CACHE_TTL_SECONDS * 1000, key="injury_data_autorefresh")
+
 # Sidebar global settings
 st.sidebar.header("Bankroll / Settings")
 bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1.0, value=float(DEFAULT_BANKROLL), step=1.0, format="%.2f")
 st.sidebar.markdown("**Kelly stakes use the bankroll value above.**")
+if st.sidebar.button("Refresh Injury Data", use_container_width=True):
+    fetch_injuries_espn.clear()
+    st.rerun()
+st.sidebar.caption("Injury data refreshes automatically about every 10 minutes.")
 
 hist_df, sched_df = load_games()
 ratings = run_elo_pipeline(hist_df) if not hist_df.empty else {}
