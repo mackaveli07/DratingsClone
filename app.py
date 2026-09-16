@@ -4,7 +4,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict
-import os, base64, requests, datetime, pytz, math
+from contextlib import contextmanager
+import os, base64, requests, datetime, pytz, math, time
 from openpyxl import load_workbook, Workbook
 from sklearn.metrics import brier_score_loss
 try:
@@ -671,6 +672,35 @@ def _write_picks_sheet(file, picks_df, columns):
             sheet.cell(row=row_idx, column=col_idx, value=value)
     workbook.save(file)
 
+@contextmanager
+def picks_file_lock(file):
+    lock_path = f"{file}.lock"
+    if fcntl:
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        return
+
+    lock_dir = f"{lock_path}.d"
+    acquired = False
+    try:
+        for _ in range(100):
+            try:
+                os.mkdir(lock_dir)
+                acquired = True
+                break
+            except FileExistsError:
+                time.sleep(0.05)
+        if not acquired:
+            raise TimeoutError("Could not acquire picks save lock.")
+        yield
+    finally:
+        if acquired and os.path.isdir(lock_dir):
+            os.rmdir(lock_dir)
+
 def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     columns = ["week", "matchup", "pick", "timestamp"]
     try:
@@ -714,15 +744,7 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
         out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
         _write_picks_sheet(file, out, columns)
 
-    if fcntl:
-        lock_path = f"{file}.lock"
-        with open(lock_path, "w") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            try:
-                _save_once()
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    else:
+    with picks_file_lock(file):
         _save_once()
 
     load_saved_picks.clear()
