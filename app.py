@@ -1018,7 +1018,10 @@ def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
         home_team = map_team_name(row.get("home_team", row.get("team2")))
         if home_team not in {t1, t2}:
             home_team = t2
-        away_team = t2 if home_team == t1 else t1
+        if home_team == t1:
+            away_team = t2
+        else:
+            away_team = t1
         score1 = float(row["score1"])
         score2 = float(row["score2"])
         week = int(row["week"])
