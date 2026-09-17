@@ -19,6 +19,14 @@ try:
 except ImportError:
     fcntl = None
 
+from predictions import (
+    ESPN_TEAM_IDS,
+    INJURY_CACHE_TTL_SECONDS,
+    fetch_all_injuries,
+    fetch_injuries_espn,
+    injury_adjustment,
+)
+
 ### ---------- CONFIG ----------
 BASE_ELO = 1500
 K = 20
@@ -337,60 +345,9 @@ def fetch_nfl_scores():
 
     return games
 
-### ---------- INJURIES ----------
-INJURY_CACHE_TTL_SECONDS = 600
-
-ESPN_TEAM_IDS = {
-    "ARI":22,"ATL":1,"BAL":33,"BUF":2,"CAR":29,"CHI":3,"CIN":4,"CLE":5,"DAL":6,"DEN":7,"DET":8,"GB":9,
-    "HOU":34,"IND":11,"JAX":30,"KC":12,"LV":13,"LAC":24,"LA":14,"MIA":15,"MIN":16,"NE":17,"NO":18,"NYG":19,"NYJ":20,"PHI":21,
-    "PIT":23,"SF":25,"SEA":26,"TB":27,"TEN":10,"WAS":28
-}
-
-@st.cache_data(ttl=INJURY_CACHE_TTL_SECONDS)
-def fetch_injuries_espn(team_abbr):
-    team_id = ESPN_TEAM_IDS.get(team_abbr)
-    if not team_id:
-        return []
-    url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
-    try:
-        response = requests.get(url, timeout=6)
-        response.raise_for_status()
-        data = response.json()
-    except (requests.RequestException, ValueError) as exc:
-        logger.warning("Failed to fetch injuries for %s: %s", team_abbr, exc)
-        return []
-    players = []
-    for e in data.get("entries", []):
-        players.append({
-            "name": e.get("athlete",{}).get("displayName"),
-            "position": e.get("position",{}).get("abbreviation"),
-            "status": e.get("status",{}).get("type","")
-        })
-    return players
-
-@st.cache_data(ttl=INJURY_CACHE_TTL_SECONDS)
-def fetch_all_injuries():
-    return {
-        abbr: fetch_injuries_espn(abbr)
-        for abbr in ESPN_TEAM_IDS
-    }
-
-def injury_adjustment(players):
-    penalty = 0
-    for p in players:
-        s = (p.get("status") or "").lower()
-        pos = (p.get("position") or "").upper()
-        if pos == "QB" and s in ["out", "doubtful"]:
-            penalty -= 50
-        elif pos in ["RB","WR","TE"] and s in ["out","doubtful"]:
-            penalty -= 15
-        elif s in ["out","doubtful"]:
-            penalty -= 10
-    return penalty
-
 ### ---------- WEATHER ----------
 STADIUMS = {
-   
+    
     "Arizona Cardinals": {
         "stadium": "State Farm Stadium",
         "city": "Glendale",
