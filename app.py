@@ -1,12 +1,16 @@
 # app.py
 # NFL Elo Projections App — Full rebuild with Kelly & Prediction Tracking (no Articles tab)
 import streamlit as st
+st.set_page_config(page_title="NFL Elo Projections", page_icon="🏈", layout="wide")
+
 import pandas as pd
 import numpy as np
 from streamlit_autorefresh import st_autorefresh
 from collections import defaultdict
 from contextlib import contextmanager
 import os, base64, requests, datetime, pytz, math, time, html
+from pathlib import Path
+from typing import Optional
 from openpyxl import load_workbook, Workbook
 from sklearn.metrics import brier_score_loss
 try:
@@ -18,6 +22,11 @@ except ImportError:
 BASE_ELO = 1500
 K = 20
 HOME_ADVANTAGE = 65
+
+APP_DIR = Path(__file__).resolve().parent
+LOGOS_DIR = APP_DIR / "Logos"
+SHIELD_IMAGE_PATH = APP_DIR / "Shield.png"
+NFL_IMAGE_PATH = APP_DIR / "NFL.png"
 
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
@@ -78,22 +87,23 @@ def get_abbr(team_full):
     return None
 
 def safe_logo(abbr, width=64):
-    path = f"Logos/{abbr}.png"
-    if abbr and os.path.exists(path):
+    path = LOGOS_DIR / f"{abbr}.png"
+    safe_abbr = html.escape(str(abbr or "?"))
+    if abbr and path.exists():
         try:
-            st.image(path, width=width)
+            st.image(str(path), width=width)
         except Exception:
             st.markdown(
                 f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
                 f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
-                f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
+                f"font-size:12px; color:#475569;'>{safe_abbr}</div>",
                 unsafe_allow_html=True,
             )
     else:
         st.markdown(
             f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
             f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
-            f"font-size:12px; color:#475569;'>{abbr or '?'}</div>",
+            f"font-size:12px; color:#475569;'>{safe_abbr}</div>",
             unsafe_allow_html=True,
         )
 
@@ -117,8 +127,9 @@ def neon_text(text, abbr=None, size=24):
     """
 
 # --- Set App Background ---
-def set_background(image_path="Shield.png"):
-    if os.path.exists(image_path):
+def set_background(image_path=SHIELD_IMAGE_PATH):
+    image_path = Path(image_path)
+    if image_path.exists():
         with open(image_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
         st.markdown(
@@ -155,7 +166,7 @@ def set_background(image_path="Shield.png"):
             unsafe_allow_html=True
         )
 
-set_background("Shield.png")
+set_background()
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
@@ -166,36 +177,90 @@ def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
         elo_ratings[t] = base + reg * (elo_ratings[t] - base)
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
+    """Update Elo ratings from a completed game result."""
     r1, r2 = elo_ratings[team1], elo_ratings[team2]
     if home_team == team1:
         r1 += HOME_ADVANTAGE
     elif home_team == team2:
         r2 += HOME_ADVANTAGE
+
+    score1 = float(score1)
+    score2 = float(score2)
     expected1 = expected_score(r1, r2)
-    actual1 = 1 if (score1 or 0) > (score2 or 0) else 0
-    margin = abs((score1 or 0) - (score2 or 0)) or 1
+    if score1 > score2:
+        actual1 = 1.0
+    elif score2 > score1:
+        actual1 = 0.0
+    else:
+        actual1 = 0.5
+    margin = max(abs(score1 - score2), 1.0)
     mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
-    elo_ratings[team2] += K * mov_mult * ((1 - actual1) - expected_score(r2, r1))
+    elo_ratings[team2] += K * mov_mult * ((1 - actual1) - (1 - expected1))
+
+def _normalize_status(value) -> str:
+    if pd.isna(value):
+        return ""
+    return " ".join(str(value).strip().lower().replace("-", " ").replace("/", " ").split())
+
+def _is_final_status(value) -> Optional[bool]:
+    """Return True/False when status clearly indicates final/non-final, else None."""
+    status = _normalize_status(value)
+    if not status:
+        return None
+    tokens = set(status.split())
+    if {"postponed", "cancelled", "canceled", "scheduled", "pregame", "halftime", "live"} & tokens:
+        return False
+    if status.startswith("q") or status in {"pre", "in"} or ("in" in tokens and "progress" in tokens):
+        return False
+    if "final" in tokens or {"complete", "completed"} & tokens or status == "post":
+        return True
+    return False
+
+def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
+    """Coerce and return only completed historical games safe for Elo updates."""
+    needed = {"season", "week", "team1", "team2", "score1", "score2"}
+    if df is None or df.empty or not needed.issubset(set(df.columns)):
+        return pd.DataFrame(columns=["season", "week", "team1", "team2", "score1", "score2", "home_team"])
+
+    games = df.copy()
+    for col in ["season", "week", "score1", "score2"]:
+        games[col] = pd.to_numeric(games[col], errors="coerce")
+    games = games.dropna(subset=["season", "week", "team1", "team2", "score1", "score2"])
+
+    status_col = next((c for c in ["status", "game_status", "state"] if c in games.columns), None)
+    if status_col:
+        status_eval = games[status_col].apply(_is_final_status)
+        games = games[status_eval != False]
+
+    games["season"] = games["season"].astype(int)
+    games["week"] = games["week"].astype(int)
+    return games.sort_values(["season", "week"]).reset_index(drop=True)
 
 def run_elo_pipeline(df):
+    """Run Elo updates in chronological order on final games only."""
+    games = _prepare_final_games(df)
     elo_ratings = defaultdict(lambda: BASE_ELO)
-    if {"season","week"} <= set(df.columns):
-        df = df.sort_values(["season","week"])
-        for i, s in enumerate(df["season"].dropna().unique()):
-            if i > 0:
-                regress_preseason(elo_ratings)
-            for _, row in df[df["season"]==s].iterrows():
-                t1 = map_team_name(row.get("team1"))
-                t2 = map_team_name(row.get("team2"))
-                home = map_team_name(row.get("home_team", t2))
-                update_ratings(
-                    elo_ratings,
-                    t1, t2,
-                    row.get("score1", 0) or 0,
-                    row.get("score2", 0) or 0,
-                    home
-                )
+    has_home_col = "home_team" in games.columns
+    prev_season = None
+    for _, row in games.iterrows():
+        season = int(row["season"])
+        if prev_season is not None and season != prev_season:
+            regress_preseason(elo_ratings)
+
+        t1 = map_team_name(row.get("team1"))
+        t2 = map_team_name(row.get("team2"))
+        home_raw = row.get("home_team", None)
+        if pd.notna(home_raw):
+            home = map_team_name(home_raw)
+        elif not has_home_col:
+            home = t2
+        else:
+            home = None
+        if home not in {t1, t2}:
+            home = None
+        update_ratings(elo_ratings, t1, t2, row["score1"], row["score2"], home)
+        prev_season = season
     return dict(elo_ratings)
 
 ### ---------- SCOREBOARD HELPERS ----------
@@ -535,30 +600,57 @@ STADIUMS = {
 
 OWM_API_KEY = os.getenv("OWM_API_KEY", "")
 
-def get_weather(team, kickoff_unix):
-    if team not in STADIUMS or not OWM_API_KEY:
+@st.cache_data(ttl=600)
+def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
+    """Fetch cached weather near kickoff for the given home team."""
+    if team not in STADIUMS or not api_key:
+        return None
+    try:
+        kickoff_unix = int(kickoff_unix)
+    except (TypeError, ValueError):
         return None
     lat, lon = STADIUMS[team]["lat"], STADIUMS[team]["lon"]
-    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=imperial"
+    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=imperial"
     try:
-        resp = requests.get(url, timeout=6); resp.raise_for_status(); data = resp.json()
-    except Exception:
+        resp = requests.get(
+            url,
+            timeout=6,
+            headers={"User-Agent": "DratingsClone/1.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return None
+    if not isinstance(data, dict):
         return None
     forecasts = data.get("list", [])
-    if not forecasts:
+    if not isinstance(forecasts, list) or not forecasts:
         return None
-    closest = min(forecasts, key=lambda x: abs(int(x.get("dt",0)) - int(kickoff_unix)))
-    dt_diff = abs(int(closest.get("dt",0)) - int(kickoff_unix))
+    candidates = []
+    for item in forecasts:
+        try:
+            dt_val = int(item.get("dt", 0))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        candidates.append((dt_val, item))
+    if not candidates:
+        return None
+    dt_val, closest = min(candidates, key=lambda x: abs(x[0] - kickoff_unix))
+    dt_diff = abs(dt_val - kickoff_unix)
     if dt_diff > 432000:
         return None
     try:
         return {
-            "temp": closest["main"]["temp"],
-            "wind_speed": closest["wind"]["speed"],
-            "condition": closest["weather"][0]["main"]
+            "temp": float(closest["main"]["temp"]),
+            "wind_speed": float(closest["wind"]["speed"]),
+            "condition": str(closest["weather"][0]["main"]),
         }
-    except Exception:
+    except (KeyError, TypeError, ValueError, IndexError):
         return None
+
+def get_weather(team: str, kickoff_unix: int):
+    """Public weather helper with cache isolation by API key."""
+    return _get_weather_cached(team, kickoff_unix, OWM_API_KEY)
 
 def weather_adjustment(weather):
     if not weather:
@@ -585,8 +677,9 @@ def default_kickoff_unix(game_date):
     return int(kickoff.timestamp())
 
 ### ---------- NFL THEMED HEADERS ----------
-def load_local_logo(path="NFL.png"):
-    if os.path.exists(path):
+def load_local_logo(path=NFL_IMAGE_PATH):
+    path = Path(path)
+    if path.exists():
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     return None
@@ -594,13 +687,14 @@ def load_local_logo(path="NFL.png"):
 NFL_LOGO_B64 = load_local_logo()
 
 def nfl_header(title):
+    safe_title = html.escape(str(title))
     logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='60'>" if NFL_LOGO_B64 else ""
     st.markdown(
         r"""
         <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
                     padding: 20px; border-radius: 15px; text-align:center; display:flex; 
                     align-items:center; justify-content:center; gap:16px;'>""" + logo_html + f"""
-            <h1 style='color:white; margin:0; font-size:42px;'>{title}</h1>
+            <h1 style='color:white; margin:0; font-size:42px;'>{safe_title}</h1>
             {logo_html}
         </div>
         """,
@@ -608,13 +702,15 @@ def nfl_header(title):
     )
 
 def nfl_subheader(text, icon="📊"):
+    safe_text = html.escape(str(text))
+    safe_icon = html.escape(str(icon))
     logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='32' style='margin-right:8px;'/>" if NFL_LOGO_B64 else ""
     st.markdown(
         r"""
         <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
                     padding: 12px; border-radius: 12px; text-align:center; display:flex; 
                     align-items:center; justify-content:center; gap:10px;'>""" + logo_html + f"""
-            <h2 style='color:white; margin:0;'>{icon} {text}</h2>
+            <h2 style='color:white; margin:0;'>{safe_icon} {safe_text}</h2>
             {logo_html}
         </div>
         """,
@@ -622,12 +718,46 @@ def nfl_subheader(text, icon="📊"):
     )
 
 ### ---------- KELLY BANKROLL MANAGEMENT ----------
-def kelly_fraction(win_prob, odds_decimal):
-    b = odds_decimal - 1 if odds_decimal else 0
-    p = max(min(win_prob, 1), 0)
-    q = 1 - p
-    f = (b * p - q) / b if b > 0 else 0
-    return max(f, 0)
+def kelly_fraction(win_prob: float, odds_decimal: float, fraction: float = 0.25, max_fraction: float = 0.05) -> float:
+    """Return a fractional Kelly stake fraction with safety cap."""
+    try:
+        p = max(min(float(win_prob), 1.0), 0.0)
+        odds_decimal = float(odds_decimal)
+        fraction = max(float(fraction), 0.0)
+        max_fraction = max(float(max_fraction), 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    b = odds_decimal - 1.0
+    if b <= 0:
+        return 0.0
+    q = 1.0 - p
+    full_kelly = ((b * p) - q) / b
+    stake_fraction = max(full_kelly, 0.0) * fraction
+    return min(stake_fraction, max_fraction)
+
+def get_available_weeks(schedule_df: pd.DataFrame):
+    """Return sorted available schedule weeks and aligned numeric week series."""
+    if schedule_df is None or schedule_df.empty or "week" not in schedule_df.columns:
+        if isinstance(schedule_df, pd.DataFrame):
+            return [], pd.Series(index=schedule_df.index, dtype="float64")
+        return [], pd.Series(dtype="float64")
+    week_series = pd.to_numeric(schedule_df["week"], errors="coerce")
+    weeks = sorted(set(week_series.dropna().astype(int).tolist()))
+    return weeks, week_series
+
+@st.cache_data(ttl=600)
+def get_total_points_baselines(hist_df: pd.DataFrame, alpha: float = 50.0):
+    """Compute per-season and global scoring baselines without mutating source data."""
+    history = _prepare_final_games(hist_df)
+    if history.empty:
+        return {}, 44.0
+    history["total_points"] = history["score1"] + history["score2"]
+    overall_avg = float(history["total_points"].mean()) if len(history) else 44.0
+    grouped = history.groupby("season")["total_points"].agg(["mean", "count"])
+    season_avgs = {}
+    for s, r in grouped.iterrows():
+        season_avgs[int(s)] = (r["mean"] * r["count"] + overall_avg * alpha) / (r["count"] + alpha)
+    return season_avgs, overall_avg
 
 def normalize_matchup_key(away_team, home_team):
     return f"{map_team_name(away_team)} @ {map_team_name(home_team)}"
@@ -868,62 +998,95 @@ def grade_picks(saved_picks_df, results_df):
 
 ### ---------- PREDICTION ACCURACY (detailed) ----------
 @st.cache_data(ttl=3600)
-def compute_detailed_accuracy(hist_df, elo_ratings):
+def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
+    """Evaluate prediction accuracy sequentially with pregame Elo probabilities."""
+    games = _prepare_final_games(hist_df)
+    if games.empty:
+        return {
+            "overall_accuracy": 0,
+            "brier_score": 1.0,
+            "per_team_accuracy": {},
+            "weekly_accuracy": {},
+            "home_accuracy": 0,
+            "away_accuracy": 0
+        }
+
+    ratings = defaultdict(lambda: BASE_ELO)
+    has_home_col = "home_team" in games.columns
     y_true, y_prob, correct, total = [], [], 0, 0
-    per_team_stats = defaultdict(lambda: {"correct":0,"total":0})
-    weekly_stats = defaultdict(lambda: {"correct":0,"total":0})
-    home_stats = {"correct":0,"total":0}
-    away_stats = {"correct":0,"total":0}
+    per_team_stats = defaultdict(lambda: {"correct": 0, "total": 0})
+    weekly_stats = defaultdict(lambda: {"correct": 0, "total": 0})
+    home_stats = {"correct": 0, "total": 0}
+    away_stats = {"correct": 0, "total": 0}
+    prev_season = None
 
-    for _, row in hist_df.iterrows():
-        try:
-            t1 = map_team_name(row.get("team1"))
-            t2 = map_team_name(row.get("team2"))
-            score1 = row.get("score1", 0) or 0
-            score2 = row.get("score2", 0) or 0
-            week = row.get("week", None)
-
-            e1 = elo_ratings.get(t1, BASE_ELO)
-            e2 = elo_ratings.get(t2, BASE_ELO)
-            prob1 = expected_score(e1 + HOME_ADVANTAGE, e2)
-
-            y_prob.append(prob1)
-            y_true.append(1 if score1 > score2 else 0)
-
-            predicted_winner = t1 if prob1 > 0.5 else t2
-            actual_winner = t1 if score1 > score2 else t2
-            if predicted_winner == actual_winner:
-                correct += 1
-            total += 1
-
-            for team, won in [(t1, score1 > score2), (t2, score2 > score1)]:
-                per_team_stats[team]["total"] += 1
-                if (predicted_winner == team and won) or (predicted_winner != team and not won):
-                    per_team_stats[team]["correct"] += 1
-
-            if week is not None:
-                weekly_stats[week]["total"] += 1
-                if predicted_winner == actual_winner:
-                    weekly_stats[week]["correct"] += 1
-
+    for _, row in games.iterrows():
+        t1 = map_team_name(row.get("team1"))
+        t2 = map_team_name(row.get("team2"))
+        home_raw = row.get("home_team", None)
+        if pd.notna(home_raw):
+            home_team = map_team_name(home_raw)
+        elif not has_home_col:
             home_team = t2
+        else:
+            home_team = None
+        if home_team == t1:
+            away_team = t2
+        elif home_team == t2:
             away_team = t1
-            home_stats["total"] += 1
-            away_stats["total"] += 1
-            if actual_winner == home_team:
-                home_stats["correct"] += 1
-            else:
-                away_stats["correct"] += 1
-        except Exception:
-            # skip bad rows
+        else:
+            home_team = None
+            away_team = None
+        score1 = float(row["score1"])
+        score2 = float(row["score2"])
+        week = int(row["week"])
+        season = int(row["season"])
+
+        if prev_season is not None and season != prev_season:
+            regress_preseason(ratings)
+
+        e1 = ratings[t1] + (HOME_ADVANTAGE if home_team == t1 else 0)
+        e2 = ratings[t2] + (HOME_ADVANTAGE if home_team == t2 else 0)
+        prob1 = expected_score(e1, e2)
+
+        update_ratings(ratings, t1, t2, score1, score2, home_team)
+        prev_season = season
+
+        if score1 == score2:
             continue
 
+        actual_team1_won = score1 > score2
+        predicted_team1_won = prob1 >= 0.5
+        predicted_winner = t1 if predicted_team1_won else t2
+        actual_winner = t1 if actual_team1_won else t2
+
+        y_prob.append(prob1)
+        y_true.append(1 if actual_team1_won else 0)
+        is_correct = predicted_winner == actual_winner
+        correct += int(is_correct)
+        total += 1
+
+        for team in (t1, t2):
+            per_team_stats[team]["total"] += 1
+            if (predicted_winner == team) == (actual_winner == team):
+                per_team_stats[team]["correct"] += 1
+
+        weekly_stats[week]["total"] += 1
+        weekly_stats[week]["correct"] += int(is_correct)
+
+        if predicted_winner == home_team:
+            home_stats["total"] += 1
+            home_stats["correct"] += int(actual_winner == home_team)
+        elif predicted_winner == away_team:
+            away_stats["total"] += 1
+            away_stats["correct"] += int(actual_winner == away_team)
+
     overall_accuracy = correct / total if total else 0
-    brier = brier_score_loss(y_true, y_prob) if total else 1.0
-    per_team_accuracy = {team: stats["correct"]/stats["total"] if stats["total"] else 0 for team, stats in per_team_stats.items()}
-    weekly_accuracy = {week: stats["correct"]/stats["total"] if stats["total"] else 0 for week, stats in weekly_stats.items()}
-    home_accuracy = home_stats["correct"]/home_stats["total"] if home_stats["total"] else 0
-    away_accuracy = away_stats["correct"]/away_stats["total"] if away_stats["total"] else 0
+    brier = brier_score_loss(y_true, y_prob) if y_true else 1.0
+    per_team_accuracy = {team: stats["correct"] / stats["total"] if stats["total"] else 0 for team, stats in per_team_stats.items()}
+    weekly_accuracy = {week: stats["correct"] / stats["total"] if stats["total"] else 0 for week, stats in weekly_stats.items()}
+    home_accuracy = home_stats["correct"] / home_stats["total"] if home_stats["total"] else 0
+    away_accuracy = away_stats["correct"] / away_stats["total"] if away_stats["total"] else 0
 
     return {
         "overall_accuracy": overall_accuracy,
@@ -950,7 +1113,6 @@ def load_games(file=EXCEL_FILE):
     return pd.DataFrame(), pd.DataFrame()
 
 # ---------- MAIN ----------
-st.set_page_config(page_title="NFL Elo Projections", layout="wide")
 nfl_header("NFL Elo Projections")
 
 st_autorefresh(interval=INJURY_CACHE_TTL_SECONDS * 1000, key="injury_data_autorefresh")
@@ -987,8 +1149,7 @@ with tabs[0]:
     if sched_df.empty:
         st.warning("Schedule not found in Excel.")
     else:
-        week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
-        available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
+        available_weeks, week_series_num = get_available_weeks(sched_df)
         if not available_weeks:
             st.warning("No valid weeks found in schedule.")
         else:
@@ -1031,13 +1192,7 @@ with tabs[0]:
                 stake_away = kelly_away * bankroll
 
                 # Projected score using season totals:
-                NFL_AVG_TOTALS, overall_avg, alpha = {}, 44, 50
-                if {"score1","score2","season"} <= set(hist_df.columns):
-                    hist_df["total_points"] = (hist_df["score1"].fillna(0) + hist_df["score2"].fillna(0))
-                    overall_avg = float(hist_df["total_points"].mean()) if len(hist_df) else 44.0
-                    grouped = hist_df.groupby("season")["total_points"].agg(["mean","count"])
-                    for s, r in grouped.iterrows():
-                        NFL_AVG_TOTALS[int(s)] = (r["mean"]*r["count"] + overall_avg*alpha) / (r["count"] + alpha)
+                NFL_AVG_TOTALS, overall_avg = get_total_points_baselines(hist_df)
                 season_val = row.get("season")
                 try:
                     season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
@@ -1128,8 +1283,7 @@ with tabs[1]:
 # --- Pick Winners Tab ---
 with tabs[2]:
     nfl_subheader("Weekly Pick’em", "📝")
-    week_series_num = pd.to_numeric(sched_df.get("week"), errors="coerce")
-    available_weeks = sorted(set(week_series_num.dropna().astype(int).tolist()))
+    available_weeks, week_series_num = get_available_weeks(sched_df)
     if available_weeks:
         week = st.selectbox("Select Week", available_weeks, key="week_picks")
         games = sched_df.loc[(week_series_num == week).fillna(False)]
@@ -1201,12 +1355,15 @@ with tabs[3]:
             status_text = "FINAL"
         else:
             status_text = game.get("status", "Scheduled")
+        safe_status_text = html.escape(str(status_text))
 
         possession_id = situation.get("possession", {}).get("id")
         last_play = situation.get("lastPlay", {}).get("text", "")
         desc = situation.get("shortDownDistanceText")
         yard_line = situation.get("yardLine")
         drive_summary = f"{desc} on {yard_line}" if desc else None
+        safe_drive_summary = html.escape(str(drive_summary)) if drive_summary else None
+        safe_last_play = html.escape(str(last_play)) if last_play else None
 
         score_home = int(home.get("score", 0))
         score_away = int(away.get("score", 0))
@@ -1238,7 +1395,7 @@ with tabs[3]:
             )
 
         with col2:
-            st.markdown(f"<h3 style='text-align:center; color:#e5e7eb;'>{status_text}</h3>", unsafe_allow_html=True)
+            st.markdown(f"<h3 style='text-align:center; color:#e5e7eb;'>{safe_status_text}</h3>", unsafe_allow_html=True)
 
         with col3:
             try:
@@ -1262,10 +1419,10 @@ with tabs[3]:
                 "margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center; text-shadow:0 0 4px #fff;'>",
                 unsafe_allow_html=True
             )
-            if drive_summary:
-                st.markdown(f"📋 {drive_summary}", unsafe_allow_html=True)
-            if last_play:
-                st.markdown(f"📝 {last_play}", unsafe_allow_html=True)
+            if safe_drive_summary:
+                st.markdown(f"📋 {safe_drive_summary}", unsafe_allow_html=True)
+            if safe_last_play:
+                st.markdown(f"📝 {safe_last_play}", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
