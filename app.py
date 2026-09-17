@@ -249,9 +249,10 @@ def run_elo_pipeline(df):
 
         t1 = map_team_name(row.get("team1"))
         t2 = map_team_name(row.get("team2"))
-        home = map_team_name(row.get("home_team", row.get("team2")))
+        home_raw = row.get("home_team", None)
+        home = map_team_name(home_raw) if pd.notna(home_raw) else None
         if home not in {t1, t2}:
-            home = t2
+            home = None
         update_ratings(elo_ratings, t1, t2, row["score1"], row["score2"], home)
         prev_season = season
     return dict(elo_ratings)
@@ -1015,13 +1016,15 @@ def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
     for _, row in games.iterrows():
         t1 = map_team_name(row.get("team1"))
         t2 = map_team_name(row.get("team2"))
-        home_team = map_team_name(row.get("home_team", row.get("team2")))
-        if home_team not in {t1, t2}:
-            home_team = t2
+        home_raw = row.get("home_team", None)
+        home_team = map_team_name(home_raw) if pd.notna(home_raw) else None
         if home_team == t1:
             away_team = t2
-        else:
+        elif home_team == t2:
             away_team = t1
+        else:
+            home_team = None
+            away_team = None
         score1 = float(row["score1"])
         score2 = float(row["score2"])
         week = int(row["week"])
