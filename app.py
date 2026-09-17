@@ -215,7 +215,7 @@ def _is_final_status(value) -> Optional[bool]:
         return False
     if "final" in tokens or {"complete", "completed"} & tokens or status == "post":
         return True
-    return None
+    return False
 
 def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce and return only completed historical games safe for Elo updates."""
@@ -231,7 +231,7 @@ def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     status_col = next((c for c in ["status", "game_status", "state"] if c in games.columns), None)
     if status_col:
         status_eval = games[status_col].apply(_is_final_status)
-        games = games[status_eval == True]
+        games = games[status_eval != False]
 
     games["season"] = games["season"].astype(int)
     games["week"] = games["week"].astype(int)
@@ -741,13 +741,7 @@ def get_available_weeks(schedule_df: pd.DataFrame):
 @st.cache_data(ttl=600)
 def get_total_points_baselines(hist_df: pd.DataFrame, alpha: float = 50.0):
     """Compute per-season and global scoring baselines without mutating source data."""
-    if hist_df is None or hist_df.empty or not {"score1", "score2", "season"} <= set(hist_df.columns):
-        return {}, 44.0
-    history = hist_df.copy()
-    history["season"] = pd.to_numeric(history["season"], errors="coerce")
-    history["score1"] = pd.to_numeric(history["score1"], errors="coerce")
-    history["score2"] = pd.to_numeric(history["score2"], errors="coerce")
-    history = history.dropna(subset=["season", "score1", "score2"])
+    history = _prepare_final_games(hist_df)
     if history.empty:
         return {}, 44.0
     history["total_points"] = history["score1"] + history["score2"]
