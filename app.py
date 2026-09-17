@@ -198,6 +198,69 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - (1 - expected1))
 
+
+def compute_matchup_prediction(
+    team_away,
+    team_home,
+    ratings,
+    odds_away=2.0,
+    odds_home=2.0,
+    kickoff_ts=None,
+    away_injuries=None,
+    home_injuries=None,
+    weather_away=None,
+    weather_home=None,
+):
+    """Compute Elo-based probabilities and Kelly stake fractions for a matchup."""
+    away = map_team_name(team_away)
+    home = map_team_name(team_home)
+    away_abbr = get_abbr(away)
+    home_abbr = get_abbr(home)
+
+    if kickoff_ts is None:
+        kickoff_ts = default_kickoff_unix(datetime.datetime.now())
+
+    away_injuries = away_injuries if away_injuries is not None else (fetch_injuries_espn(away_abbr) if away_abbr else [])
+    home_injuries = home_injuries if home_injuries is not None else (fetch_injuries_espn(home_abbr) if home_abbr else [])
+
+    weather_away = weather_away if weather_away is not None else get_weather(away, kickoff_ts)
+    weather_home = weather_home if weather_home is not None else get_weather(home, kickoff_ts)
+
+    adj_away = ratings.get(away, BASE_ELO) + injury_adjustment(away_injuries) + weather_adjustment(weather_away)
+    adj_home = ratings.get(home, BASE_ELO) + injury_adjustment(home_injuries) + weather_adjustment(weather_home)
+
+    win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
+    win_prob_away = 1.0 - win_prob_home
+
+    kelly_home = kelly_fraction(win_prob_home, odds_home)
+    kelly_away = kelly_fraction(win_prob_away, odds_away)
+
+    projected_total = 44.0
+    proj_home = int(round(win_prob_home * projected_total))
+    proj_away = int(round(win_prob_away * projected_total))
+
+    return {
+        "away": away,
+        "home": home,
+        "away_abbr": away_abbr,
+        "home_abbr": home_abbr,
+        "adj_away": adj_away,
+        "adj_home": adj_home,
+        "win_prob_away": win_prob_away,
+        "win_prob_home": win_prob_home,
+        "kelly_away": kelly_away,
+        "kelly_home": kelly_home,
+        "stake_away": kelly_away * DEFAULT_BANKROLL,
+        "stake_home": kelly_home * DEFAULT_BANKROLL,
+        "proj_away": proj_away,
+        "proj_home": proj_home,
+        "weather_away": weather_away,
+        "weather_home": weather_home,
+        "away_injuries": away_injuries,
+        "home_injuries": home_injuries,
+    }
+
+
 def _normalize_status(value) -> str:
     if pd.isna(value):
         return ""
@@ -1161,37 +1224,46 @@ with tabs[0]:
                 team_away = map_team_name(row.get("team1"))
                 abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
 
+                kickoff = default_kickoff_unix(row.get("date"))
                 home_inj = fetch_injuries_espn(abbr_home) if abbr_home else []
                 away_inj = fetch_injuries_espn(abbr_away) if abbr_away else []
-                kickoff = default_kickoff_unix(row.get("date"))
-                weather = get_weather(team_home, kickoff)
-
-                adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj) + weather_adjustment(weather)
-                adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj) + weather_adjustment(weather)
-
-                win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
-                win_prob_away = 1 - win_prob_home
+                weather_home = get_weather(team_home, kickoff)
+                weather_away = get_weather(team_away, kickoff)
 
                 col_odds1, col_odds2 = st.columns([1,1])
                 with col_odds1:
                     odds_away = st.number_input(
                         f"{team_away} Odds (decimal)",
                         min_value=1.01, value=2.0, step=0.01,
-                        key=f"odds_away_{team_away}_{team_home}"
+                        key=f"odds_away_{selected_week}_{team_away}_{team_home}"
                     )
                 with col_odds2:
                     odds_home = st.number_input(
                         f"{team_home} Odds (decimal)",
                         min_value=1.01, value=2.0, step=0.01,
-                        key=f"odds_home_{team_home}_{team_away}"
+                        key=f"odds_home_{selected_week}_{team_home}_{team_away}"
                     )
 
-                kelly_home = kelly_fraction(win_prob_home, odds_home)
-                kelly_away = kelly_fraction(win_prob_away, odds_away)
+                prediction = compute_matchup_prediction(
+                    team_away=team_away,
+                    team_home=team_home,
+                    ratings=ratings,
+                    odds_away=odds_away,
+                    odds_home=odds_home,
+                    kickoff_ts=kickoff,
+                    away_injuries=away_inj,
+                    home_injuries=home_inj,
+                    weather_away=weather_away,
+                    weather_home=weather_home,
+                )
+
+                win_prob_home = prediction["win_prob_home"]
+                win_prob_away = prediction["win_prob_away"]
+                kelly_home = prediction["kelly_home"]
+                kelly_away = prediction["kelly_away"]
                 stake_home = kelly_home * bankroll
                 stake_away = kelly_away * bankroll
 
-                # Projected score using season totals:
                 NFL_AVG_TOTALS, overall_avg = get_total_points_baselines(hist_df)
                 season_val = row.get("season")
                 try:
@@ -1224,8 +1296,8 @@ with tabs[0]:
                     st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
 
                 with st.expander("Weather Forecast 🌤️"):
-                    if weather:
-                        st.write(weather)
+                    if weather_home or weather_away:
+                        st.write({"home": weather_home, "away": weather_away})
                     else:
                         st.caption("No forecast available.")
 
