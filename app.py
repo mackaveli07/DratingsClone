@@ -9,7 +9,7 @@ from streamlit_autorefresh import st_autorefresh
 from collections import defaultdict
 from contextlib import contextmanager
 import logging
-import os, base64, requests, datetime, pytz, math, time, html
+import os, requests, datetime, pytz, math, time, html
 from pathlib import Path
 from typing import Optional
 from openpyxl import load_workbook, Workbook
@@ -18,6 +18,8 @@ try:
     import fcntl
 except ImportError:
     fcntl = None
+
+from ui_helpers import safe_logo, neon_text, set_background, nfl_header, nfl_subheader
 
 from predictions import (
     ESPN_TEAM_IDS,
@@ -79,6 +81,8 @@ TEAM_NAME_FIXES = {
 }
 
 ### ---------- HELPERS ----------
+# UI helpers are now imported from ui_helpers.py.
+
 def map_team_name(name):
     if not name:
         return "Unknown"
@@ -92,101 +96,23 @@ def map_team_name(name):
             return full
     return name
 
+
 def get_abbr(team_full):
     for abbr, full in NFL_FULL_NAMES.items():
         if full == team_full:
             return abbr
     return None
 
-def safe_logo(abbr, width=64):
-    path = LOGOS_DIR / f"{abbr}.png"
-    safe_abbr = html.escape(str(abbr or "?"))
-    if abbr and path.exists():
-        try:
-            st.image(str(path), width=width)
-        except Exception:
-            st.markdown(
-                f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
-                f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
-                f"font-size:12px; color:#475569;'>{safe_abbr}</div>",
-                unsafe_allow_html=True,
-            )
-    else:
-        st.markdown(
-            f"<div style='width:{width}px; height:{width}px; background:#e5e7eb; "
-            f"display:flex; align-items:center; justify-content:center; border-radius:50%; "
-            f"font-size:12px; color:#475569;'>{safe_abbr}</div>",
-            unsafe_allow_html=True,
-        )
-
-def neon_text(text, abbr=None, size=24):
-    color = TEAM_COLORS.get(abbr, "#39ff14") if abbr else "#39ff14"
-    safe_text = html.escape(str(text))
-    return f"""
-    <span style="
-        color: #f8fafc;
-        font-size: {size}px;
-        font-weight: 800;
-        letter-spacing: 0.02em;
-        line-height: 1.15;
-        -webkit-text-stroke: 1px {color};
-        text-shadow:
-            0 0 2px rgba(15, 23, 42, 0.95),
-            0 0 8px {color},
-            0 0 18px {color},
-            0 0 30px {color};
-    ">{safe_text}</span>
-    """
-
-# --- Set App Background ---
-def set_background(image_path=SHIELD_IMAGE_PATH):
-    image_path = Path(image_path)
-    if image_path.exists():
-        with open(image_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        st.markdown(
-            f"""
-            <style>
-            .stApp {{
-                background: linear-gradient(rgba(0,0,0,0.75), rgba(0,0,0,0.85)),
-                            url("data:image/png;base64,{b64}") no-repeat center center fixed;
-                background-size: cover;
-                color: white;
-            }}
-            /* Frosted glass cards */
-            .card {{
-                background: rgba(30,30,30,0.6);
-                backdrop-filter: blur(14px);
-                border-radius: 20px;
-                padding: 20px;
-                margin: 20px 0;
-                box-shadow: 0 8px 25px rgba(0,0,0,0.4);
-            }}
-            @media (max-width: 768px) {{
-                h1,h2,h3,h4,h5,h6 {{ font-size:90% !important; }}
-                .card {{ padding:14px !important; margin:12px 0 !important; }}
-                img {{ max-width:80px !important; height:auto !important; }}
-                .stMarkdown p {{ font-size:14px !important; }}
-            }}
-            @media (max-width: 480px) {{
-                .card {{ padding:10px !important; }}
-                h1,h2,h3 {{ font-size:80% !important; }}
-                img {{ max-width:60px !important; }}
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-
-set_background()
 
 ### ---------- ELO ----------
 def expected_score(r1, r2):
     return 1 / (1 + 10 ** ((r2 - r1) / 400))
 
+
 def regress_preseason(elo_ratings, reg=0.65, base=BASE_ELO):
     for t in list(elo_ratings.keys()):
         elo_ratings[t] = base + reg * (elo_ratings[t] - base)
+
 
 def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     """Update Elo ratings from a completed game result."""
@@ -215,10 +141,12 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - (1 - expected1))
 
+
 def _normalize_status(value) -> str:
     if pd.isna(value):
         return ""
     return " ".join(str(value).strip().lower().replace("-", " ").replace("/", " ").split())
+
 
 def _is_final_status(value) -> Optional[bool]:
     """Return True/False when status clearly indicates final/non-final, else None."""
@@ -233,6 +161,7 @@ def _is_final_status(value) -> Optional[bool]:
     if "final" in tokens or {"complete", "completed"} & tokens or status == "post":
         return True
     return False
+
 
 def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce and return only completed historical games safe for Elo updates."""
@@ -253,6 +182,7 @@ def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     games["season"] = games["season"].astype(int)
     games["week"] = games["week"].astype(int)
     return games.sort_values(["season", "week"]).reset_index(drop=True)
+
 
 def run_elo_pipeline(df):
     """Run Elo updates in chronological order on final games only."""
@@ -291,6 +221,7 @@ def _parse_utc_iso(ts: str):
     except (AttributeError, TypeError, ValueError):
         return None
 
+
 def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
     if not dt_utc:
         return "Scheduled"
@@ -299,6 +230,7 @@ def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
     tz = pytz.timezone(tz_name)
     dt_local = dt_utc.astimezone(tz)
     return "Scheduled " + dt_local.strftime("%a %I:%M %p").replace(" 0", " ")
+
 
 @st.cache_data(ttl=30)
 def fetch_nfl_scores():
@@ -624,9 +556,11 @@ def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
     except (KeyError, TypeError, ValueError, IndexError):
         return None
 
+
 def get_weather(team: str, kickoff_unix: int):
     """Public weather helper with cache isolation by API key."""
     return _get_weather_cached(team, kickoff_unix, OWM_API_KEY)
+
 
 def weather_adjustment(weather):
     if not weather:
@@ -649,6 +583,7 @@ def weather_adjustment(weather):
         pen -= 1
     return pen
 
+
 def apply_game_weather_adjustment(home_rating, away_rating, weather):
     """Apply adverse-weather uncertainty once at the game level.
 
@@ -663,6 +598,7 @@ def apply_game_weather_adjustment(home_rating, away_rating, weather):
         return home_rating + weather_penalty, away_rating
     return home_rating, away_rating + weather_penalty
 
+
 def default_kickoff_unix(game_date):
     if isinstance(game_date, str):
         try:
@@ -674,47 +610,6 @@ def default_kickoff_unix(game_date):
     est = pytz.timezone("US/Eastern")
     kickoff = est.localize(datetime.datetime(game_date.year, game_date.month, game_date.day, 13, 0, 0))
     return int(kickoff.timestamp())
-
-### ---------- NFL THEMED HEADERS ----------
-def load_local_logo(path=NFL_IMAGE_PATH):
-    path = Path(path)
-    if path.exists():
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    return None
-
-NFL_LOGO_B64 = load_local_logo()
-
-def nfl_header(title):
-    safe_title = html.escape(str(title))
-    logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='60'>" if NFL_LOGO_B64 else ""
-    st.markdown(
-        r"""
-        <div style='background: linear-gradient(90deg, #013369, #d50a0a); 
-                    padding: 20px; border-radius: 15px; text-align:center; display:flex; 
-                    align-items:center; justify-content:center; gap:16px;'>""" + logo_html + f"""
-            <h1 style='color:white; margin:0; font-size:42px;'>{safe_title}</h1>
-            {logo_html}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-def nfl_subheader(text, icon="📊"):
-    safe_text = html.escape(str(text))
-    safe_icon = html.escape(str(icon))
-    logo_html = f"<img src='data:image/png;base64,{NFL_LOGO_B64}' height='32' style='margin-right:8px;'/>" if NFL_LOGO_B64 else ""
-    st.markdown(
-        r"""
-        <div style='background: linear-gradient(90deg, #d50a0a, #013369); 
-                    padding: 12px; border-radius: 12px; text-align:center; display:flex; 
-                    align-items:center; justify-content:center; gap:10px;'>""" + logo_html + f"""
-            <h2 style='color:white; margin:0;'>{safe_icon} {safe_text}</h2>
-            {logo_html}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
 ### ---------- KELLY BANKROLL MANAGEMENT ----------
 def kelly_fraction(win_prob: float, odds_decimal: float, fraction: float = 0.25, max_fraction: float = 0.05) -> float:
@@ -734,6 +629,7 @@ def kelly_fraction(win_prob: float, odds_decimal: float, fraction: float = 0.25,
     stake_fraction = max(full_kelly, 0.0) * fraction
     return min(stake_fraction, max_fraction)
 
+
 def get_available_weeks(schedule_df: pd.DataFrame):
     """Return sorted available schedule weeks and aligned numeric week series."""
     if schedule_df is None or schedule_df.empty or "week" not in schedule_df.columns:
@@ -743,6 +639,7 @@ def get_available_weeks(schedule_df: pd.DataFrame):
     week_series = pd.to_numeric(schedule_df["week"], errors="coerce")
     weeks = sorted(set(week_series.dropna().astype(int).tolist()))
     return weeks, week_series
+
 
 @st.cache_data(ttl=600)
 def get_total_points_baselines(hist_df: pd.DataFrame, alpha: float = 50.0):
@@ -758,8 +655,10 @@ def get_total_points_baselines(hist_df: pd.DataFrame, alpha: float = 50.0):
         season_avgs[int(s)] = (r["mean"] * r["count"] + overall_avg * alpha) / (r["count"] + alpha)
     return season_avgs, overall_avg
 
+
 def normalize_matchup_key(away_team, home_team):
     return f"{map_team_name(away_team)} @ {map_team_name(home_team)}"
+
 
 def normalize_matchup_value(matchup):
     if pd.isna(matchup):
@@ -770,9 +669,11 @@ def normalize_matchup_value(matchup):
         return text
     return normalize_matchup_key(parts[0], parts[1])
 
+
 @st.cache_data(ttl=600)
 def load_saved_picks(file=EXCEL_FILE):
     return _read_saved_picks_from_excel(file)
+
 
 def _read_saved_picks_from_excel(file=EXCEL_FILE):
     if not os.path.exists(file):
@@ -787,6 +688,7 @@ def _read_saved_picks_from_excel(file=EXCEL_FILE):
         if col not in df.columns:
             df[col] = np.nan
     return df[PICKS_COLUMNS]
+
 
 def _write_picks_sheet(file, picks_df, columns):
     if os.path.exists(file):
@@ -808,6 +710,7 @@ def _write_picks_sheet(file, picks_df, columns):
         for col_idx, value in enumerate(row, start=1):
             sheet.cell(row=row_idx, column=col_idx, value=value)
     workbook.save(file)
+
 
 @contextmanager
 def picks_file_lock(file):
@@ -837,6 +740,7 @@ def picks_file_lock(file):
     finally:
         if acquired and os.path.isdir(lock_dir):
             os.rmdir(lock_dir)
+
 
 def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     try:
@@ -886,6 +790,7 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     load_saved_picks.clear()
     return True
 
+
 def build_actual_results_by_week(hist_df):
     needed = {"week", "team1", "team2", "score1", "score2"}
     cols = ["week", "matchup", "winner", "is_final"]
@@ -926,6 +831,7 @@ def build_actual_results_by_week(hist_df):
     if not rows:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame(rows, columns=cols).drop_duplicates(subset=["week", "matchup"], keep="last")
+
 
 def grade_picks(saved_picks_df, results_df):
     graded_cols = ["week", "matchup", "pick", "timestamp", "winner", "is_final", "status", "result"]
@@ -1108,6 +1014,7 @@ def load_games(file=EXCEL_FILE, file_mtime=None):
             sched_df = pd.DataFrame()
         return hist_df, sched_df
     return pd.DataFrame(), pd.DataFrame()
+
 
 def main():
     nfl_header("NFL Elo Projections")
