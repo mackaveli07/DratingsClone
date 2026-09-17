@@ -89,11 +89,15 @@ def compute_matchup_prediction(
     if kickoff_ts is None:
         kickoff_ts = 0
 
-    away_injuries = away_injuries if away_injuries is not None else ([] if not away_abbr else [])
-    home_injuries = home_injuries if home_injuries is not None else ([] if not home_abbr else [])
+    if away_injuries is None:
+        away_injuries = fetch_injuries_espn(away_abbr) if away_abbr else []
+    if home_injuries is None:
+        home_injuries = fetch_injuries_espn(home_abbr) if home_abbr else []
 
-    weather_away = weather_away if weather_away is not None else get_weather(away, kickoff_ts)
-    weather_home = weather_home if weather_home is not None else get_weather(home, kickoff_ts)
+    if weather_away is None:
+        weather_away = get_weather(away, kickoff_ts)
+    if weather_home is None:
+        weather_home = get_weather(home, kickoff_ts)
 
     adj_away = ratings.get(away, BASE_ELO) + injury_adjustment(away_injuries) + weather_adjustment(weather_away)
     adj_home = ratings.get(home, BASE_ELO) + injury_adjustment(home_injuries) + weather_adjustment(weather_home)

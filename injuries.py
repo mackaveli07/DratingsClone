@@ -4,21 +4,22 @@ import os
 
 import pytz
 import requests
+import streamlit as st
 
 from config import STADIUMS
 
 OWM_API_KEY = os.getenv("OWM_API_KEY", "")
 
 
-@staticmethod
+@st.cache_data(ttl=600)
 def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
-    """Fetch cached weather near kickoff for the given home team."""
     if team not in STADIUMS or not api_key:
         return None
     try:
         kickoff_unix = int(kickoff_unix)
     except (TypeError, ValueError):
         return None
+
     lat, lon = STADIUMS[team]["lat"], STADIUMS[team]["lon"]
     url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=imperial"
     try:
@@ -27,6 +28,7 @@ def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
         data = resp.json()
     except (requests.RequestException, ValueError):
         return None
+
     if not isinstance(data, dict):
         return None
 
@@ -45,8 +47,7 @@ def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
         return None
 
     dt_val, closest = min(candidates, key=lambda x: abs(x[0] - kickoff_unix))
-    dt_diff = abs(dt_val - kickoff_unix)
-    if dt_diff > 432000:
+    if abs(dt_val - kickoff_unix) > 432000:
         return None
 
     try:
@@ -66,17 +67,17 @@ def get_weather(team: str, kickoff_unix: int):
 def weather_adjustment(weather):
     if not weather:
         return 0
-    pen = 0
+    penalty = 0
     try:
         if weather.get("wind_speed", 0) > 20:
-            pen -= 2
+            penalty -= 2
         if weather.get("condition", "").lower() in ["rain", "snow"]:
-            pen -= 3
+            penalty -= 3
         if weather.get("temp", 100) < 25:
-            pen -= 1
+            penalty -= 1
     except Exception:
         return 0
-    return pen
+    return penalty
 
 
 def default_kickoff_unix(game_date):

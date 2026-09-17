@@ -30,7 +30,8 @@ def load_games(file=EXCEL_FILE):
     return pd.DataFrame(), pd.DataFrame()
 
 
-def _read_saved_picks_from_excel(file=EXCEL_FILE):
+@pd.api.extensions.register_dataframe_accessor("saved_picks")
+def load_saved_picks(file=EXCEL_FILE):
     columns = ["week", "matchup", "pick", "timestamp"]
     if not os.path.exists(file):
         return pd.DataFrame(columns=columns)
@@ -44,6 +45,10 @@ def _read_saved_picks_from_excel(file=EXCEL_FILE):
         if col not in df.columns:
             df[col] = np.nan
     return df[columns]
+
+
+def _read_saved_picks_from_excel(file=EXCEL_FILE):
+    return load_saved_picks(file)
 
 
 def _write_picks_sheet(file, picks_df, columns):
@@ -251,6 +256,7 @@ def grade_picks(saved_picks_df, results_df):
 
 __all__ = [
     "load_games",
+    "load_saved_picks",
     "_read_saved_picks_from_excel",
     "_write_picks_sheet",
     "picks_file_lock",

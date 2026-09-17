@@ -14,9 +14,9 @@ def fetch_injuries_espn(team_abbr):
         return []
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
     try:
-        r = requests.get(url, timeout=6)
-        r.raise_for_status()
-        data = r.json()
+        response = requests.get(url, timeout=6)
+        response.raise_for_status()
+        data = response.json()
     except Exception:
         return []
 
