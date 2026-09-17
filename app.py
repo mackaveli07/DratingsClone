@@ -241,6 +241,7 @@ def run_elo_pipeline(df):
     """Run Elo updates in chronological order on final games only."""
     games = _prepare_final_games(df)
     elo_ratings = defaultdict(lambda: BASE_ELO)
+    has_home_col = "home_team" in games.columns
     prev_season = None
     for _, row in games.iterrows():
         season = int(row["season"])
@@ -250,7 +251,12 @@ def run_elo_pipeline(df):
         t1 = map_team_name(row.get("team1"))
         t2 = map_team_name(row.get("team2"))
         home_raw = row.get("home_team", None)
-        home = map_team_name(home_raw) if pd.notna(home_raw) else None
+        if pd.notna(home_raw):
+            home = map_team_name(home_raw)
+        elif not has_home_col:
+            home = t2
+        else:
+            home = None
         if home not in {t1, t2}:
             home = None
         update_ratings(elo_ratings, t1, t2, row["score1"], row["score2"], home)
@@ -1006,6 +1012,7 @@ def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
         }
 
     ratings = defaultdict(lambda: BASE_ELO)
+    has_home_col = "home_team" in games.columns
     y_true, y_prob, correct, total = [], [], 0, 0
     per_team_stats = defaultdict(lambda: {"correct": 0, "total": 0})
     weekly_stats = defaultdict(lambda: {"correct": 0, "total": 0})
@@ -1017,7 +1024,12 @@ def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
         t1 = map_team_name(row.get("team1"))
         t2 = map_team_name(row.get("team2"))
         home_raw = row.get("home_team", None)
-        home_team = map_team_name(home_raw) if pd.notna(home_raw) else None
+        if pd.notna(home_raw):
+            home_team = map_team_name(home_raw)
+        elif not has_home_col:
+            home_team = t2
+        else:
+            home_team = None
         if home_team == t1:
             away_team = t2
         elif home_team == t2:
