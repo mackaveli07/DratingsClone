@@ -215,7 +215,7 @@ def _is_final_status(value) -> Optional[bool]:
         return False
     if "final" in tokens or {"complete", "completed"} & tokens or status == "post":
         return True
-    return None
+    return False
 
 def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce and return only completed historical games safe for Elo updates."""
