@@ -13,6 +13,7 @@ NFL_IMAGE_PATH = APP_DIR / "NFL.png"
 EXCEL_FILE = "games.xlsx"
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
+PICKS_SHEET = "Picks"
 
 DEFAULT_BANKROLL = 50
 
@@ -174,6 +175,7 @@ __all__ = [
     "EXCEL_FILE",
     "HIST_SHEET",
     "SCHEDULE_SHEET",
+    "PICKS_SHEET",
     "DEFAULT_BANKROLL",
     "NFL_FULL_NAMES",
     "TEAM_COLORS",

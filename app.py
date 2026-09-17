@@ -1,13 +1,16 @@
 # storage.py
+import logging
 import os
+import tempfile
 import time
 from contextlib import contextmanager
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook, load_workbook
 
-from config import EXCEL_FILE, HIST_SHEET, SCHEDULE_SHEET
+from config import EXCEL_FILE, HIST_SHEET, NFL_FULL_NAMES, PICKS_SHEET, SCHEDULE_SHEET
 from team_utils import map_team_name
 
 try:
@@ -15,53 +18,161 @@ try:
 except ImportError:
     fcntl = None
 
+logger = logging.getLogger(__name__)
+PICKS_COLUMNS = ["week", "matchup", "pick", "timestamp"]
+VALID_TEAM_NAMES = frozenset(NFL_FULL_NAMES.values())
 
-def load_games(file=EXCEL_FILE):
+
+def _read_excel_sheet(file: str | os.PathLike[str], sheet_name: str) -> pd.DataFrame:
+    try:
+        return pd.read_excel(file, sheet_name=sheet_name)
+    except ValueError as exc:
+        if f"Worksheet named '{sheet_name}' not found" in str(exc):
+            logger.warning("Worksheet %r not found in %s", sheet_name, file)
+            return pd.DataFrame()
+        raise
+
+
+def _normalize_team_name(name: object) -> str | None:
+    mapped = map_team_name(name)
+    if mapped in VALID_TEAM_NAMES:
+        return mapped
+    return None
+
+
+def normalize_matchup(matchup: object) -> str | None:
+    if pd.isna(matchup):
+        return None
+
+    parts = [part.strip() for part in str(matchup).split("@")]
+    if len(parts) != 2:
+        return None
+
+    away_team = _normalize_team_name(parts[0])
+    home_team = _normalize_team_name(parts[1])
+    if not away_team or not home_team:
+        return None
+
+    return f"{away_team} @ {home_team}"
+
+
+def _normalize_saved_picks_frame(df: pd.DataFrame, *, drop_invalid: bool) -> pd.DataFrame:
+    normalized = df.copy()
+    for col in PICKS_COLUMNS:
+        if col not in normalized.columns:
+            normalized[col] = np.nan
+
+    normalized = normalized[PICKS_COLUMNS]
+    normalized["matchup"] = normalized["matchup"].apply(normalize_matchup)
+    normalized["pick"] = normalized["pick"].apply(_normalize_team_name)
+
+    if not drop_invalid:
+        return normalized
+
+    normalized["week"] = pd.to_numeric(normalized["week"], errors="coerce")
+    normalized = normalized.dropna(subset=["week", "matchup", "pick"])
+    if normalized.empty:
+        return pd.DataFrame(columns=PICKS_COLUMNS)
+
+    normalized["week"] = normalized["week"].astype(int)
+    return normalized[PICKS_COLUMNS]
+
+
+def _is_final_status(status: object, score_complete: bool) -> bool:
+    if pd.isna(status):
+        return score_complete
+
+    normalized_status = " ".join(str(status).strip().lower().replace("-", " ").replace("/", " ").split())
+    if not normalized_status:
+        return score_complete
+
+    status_tokens = set(normalized_status.split())
+    if "postponed" in status_tokens:
+        return False
+    if (
+        "final" in status_tokens
+        or normalized_status == "post"
+        or "complete" in status_tokens
+        or "completed" in status_tokens
+    ):
+        return score_complete
+    if (
+        normalized_status.startswith("q")
+        or "quarter" in status_tokens
+        or "quarters" in status_tokens
+        or "live" in status_tokens
+        or "halftime" in status_tokens
+        or "scheduled" in status_tokens
+        or "pregame" in status_tokens
+        or "pre" in status_tokens
+        or ("in" in status_tokens and "progress" in status_tokens)
+    ):
+        return False
+    return score_complete
+
+
+def _atomic_workbook_save(workbook: Workbook, file: str | os.PathLike[str]) -> None:
+    file_path = os.fspath(file)
+    directory = os.path.dirname(os.path.abspath(file_path)) or "."
+    os.makedirs(directory, exist_ok=True)
+
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(file_path)}.",
+        suffix=os.path.splitext(file_path)[1] or ".xlsx",
+        dir=directory,
+    )
+    os.close(fd)
+    try:
+        workbook.save(temp_path)
+        os.replace(temp_path, file_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def load_games(file: str | os.PathLike[str] = EXCEL_FILE) -> tuple[pd.DataFrame, pd.DataFrame]:
     if os.path.exists(file):
-        try:
-            hist_df = pd.read_excel(file, sheet_name=HIST_SHEET)
-        except Exception:
-            hist_df = pd.DataFrame()
-        try:
-            sched_df = pd.read_excel(file, sheet_name=SCHEDULE_SHEET)
-        except Exception:
-            sched_df = pd.DataFrame()
+        hist_df = _read_excel_sheet(file, HIST_SHEET)
+        sched_df = _read_excel_sheet(file, SCHEDULE_SHEET)
         return hist_df, sched_df
     return pd.DataFrame(), pd.DataFrame()
 
 
-@pd.api.extensions.register_dataframe_accessor("saved_picks")
-def load_saved_picks(file=EXCEL_FILE):
-    columns = ["week", "matchup", "pick", "timestamp"]
+def load_saved_picks(file: str | os.PathLike[str] = EXCEL_FILE) -> pd.DataFrame:
     if not os.path.exists(file):
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=PICKS_COLUMNS)
     try:
-        df = pd.read_excel(file, sheet_name="Picks")
+        df = pd.read_excel(file, sheet_name=PICKS_SHEET)
     except ValueError as exc:
-        if "Worksheet named 'Picks' not found" in str(exc):
-            return pd.DataFrame(columns=columns)
+        if f"Worksheet named '{PICKS_SHEET}' not found" in str(exc):
+            return pd.DataFrame(columns=PICKS_COLUMNS)
         raise
-    for col in columns:
-        if col not in df.columns:
-            df[col] = np.nan
-    return df[columns]
+    return _normalize_saved_picks_frame(df, drop_invalid=False)
 
 
-def _read_saved_picks_from_excel(file=EXCEL_FILE):
+def _read_saved_picks_from_excel(file: str | os.PathLike[str] = EXCEL_FILE) -> pd.DataFrame:
     return load_saved_picks(file)
 
 
-def _write_picks_sheet(file, picks_df, columns):
-    if os.path.exists(file):
-        workbook = load_workbook(file)
-        if "Picks" in workbook.sheetnames:
-            sheet = workbook["Picks"]
+def _write_picks_sheet(
+    file: str | os.PathLike[str], picks_df: pd.DataFrame, columns: list[str]
+) -> None:
+    file_path = os.fspath(file)
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)) or ".", exist_ok=True)
+    if os.path.exists(file_path):
+        workbook = load_workbook(file_path)
+        if PICKS_SHEET in workbook.sheetnames:
+            sheet = workbook[PICKS_SHEET]
         else:
-            sheet = workbook.create_sheet("Picks")
+            sheet = workbook.create_sheet(PICKS_SHEET)
     else:
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "Picks"
+        sheet.title = PICKS_SHEET
 
     if sheet.max_row and sheet.max_row > 0:
         sheet.delete_rows(1, sheet.max_row)
@@ -70,11 +181,11 @@ def _write_picks_sheet(file, picks_df, columns):
     for row_idx, row in enumerate(picks_df.itertuples(index=False, name=None), start=2):
         for col_idx, value in enumerate(row, start=1):
             sheet.cell(row=row_idx, column=col_idx, value=value)
-    workbook.save(file)
+    _atomic_workbook_save(workbook, file_path)
 
 
 @contextmanager
-def picks_file_lock(file):
+def picks_file_lock(file: str | os.PathLike[str]):
     lock_path = f"{file}.lock"
     if fcntl:
         with open(lock_path, "w") as lock_file:
@@ -103,18 +214,26 @@ def picks_file_lock(file):
             os.rmdir(lock_dir)
 
 
-def save_week_picks(week, picks_dict, file=EXCEL_FILE):
-    columns = ["week", "matchup", "pick", "timestamp"]
+def save_week_picks(
+    week: object, picks_dict: Mapping[object, object] | None, file: str | os.PathLike[str] = EXCEL_FILE
+) -> bool:
     try:
         week_int = int(week)
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
     rows = []
     now_ts = pd.Timestamp.now().strftime("%Y-%m-%dT%H:%M:%S")
-    for matchup, pick in (picks_dict or {}).items():
-        norm_matchup = matchup
-        norm_pick = map_team_name(pick)
+    if picks_dict is None:
+        picks_items = {}
+    elif hasattr(picks_dict, "items"):
+        picks_items = picks_dict
+    else:
+        return False
+
+    for matchup, pick in picks_items.items():
+        norm_matchup = normalize_matchup(matchup)
+        norm_pick = _normalize_team_name(pick)
         if not norm_matchup or not norm_pick:
             continue
         rows.append({"week": week_int, "matchup": norm_matchup, "pick": norm_pick, "timestamp": now_ts})
@@ -122,28 +241,25 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     if not rows:
         return False
 
-    new_rows = pd.DataFrame(rows, columns=columns)
+    new_rows = pd.DataFrame(rows, columns=PICKS_COLUMNS)
 
     def _save_once():
-        existing = _read_saved_picks_from_excel(file).copy()
+        existing = _normalize_saved_picks_frame(_read_saved_picks_from_excel(file), drop_invalid=True)
         if not existing.empty:
-            existing["week"] = pd.to_numeric(existing["week"], errors="coerce")
-            existing["pick"] = existing["pick"].apply(map_team_name)
-            existing = existing.dropna(subset=["week", "matchup", "pick"])
-            existing["week"] = existing["week"].astype(int)
             existing = existing[~((existing["week"] == week_int) & (existing["matchup"].isin(new_rows["matchup"])))]
 
-        out = pd.concat([existing[columns], new_rows], ignore_index=True)
+        out = pd.concat([existing[PICKS_COLUMNS], new_rows], ignore_index=True)
         out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
-        _write_picks_sheet(file, out, columns)
+        _write_picks_sheet(file, out, PICKS_COLUMNS)
 
+    os.makedirs(os.path.dirname(os.path.abspath(os.fspath(file))) or ".", exist_ok=True)
     with picks_file_lock(file):
         _save_once()
 
     return True
 
 
-def build_actual_results_by_week(hist_df):
+def build_actual_results_by_week(hist_df: pd.DataFrame) -> pd.DataFrame:
     needed = {"week", "team1", "team2", "score1", "score2"}
     cols = ["week", "matchup", "winner", "is_final"]
     if hist_df is None or hist_df.empty or not needed.issubset(set(hist_df.columns)):
@@ -154,33 +270,17 @@ def build_actual_results_by_week(hist_df):
         week = pd.to_numeric(row.get("week"), errors="coerce")
         if pd.isna(week):
             continue
-        away_team = map_team_name(row.get("team1"))
-        home_team = map_team_name(row.get("team2"))
+        away_team = _normalize_team_name(row.get("team1"))
+        home_team = _normalize_team_name(row.get("team2"))
+        if not away_team or not home_team:
+            continue
+
         score1 = pd.to_numeric(row.get("score1"), errors="coerce")
         score2 = pd.to_numeric(row.get("score2"), errors="coerce")
         score_complete = pd.notna(score1) and pd.notna(score2)
 
         status_raw = row.get("status", row.get("game_status", row.get("state", None)))
-        status_text = str(status_raw).strip().lower() if pd.notna(status_raw) else ""
-        normalized_status = " ".join(status_text.replace("-", " ").replace("/", " ").split())
-        status_tokens = set(normalized_status.split()) if normalized_status else set()
-
-        if "postponed" in status_tokens:
-            is_final = False
-        elif "final" in status_tokens or {"complete", "completed"} & status_tokens or normalized_status == "post":
-            is_final = True
-        elif (
-            normalized_status.startswith("q")
-            or "live" in status_tokens
-            or "halftime" in status_tokens
-            or "scheduled" in status_tokens
-            or "pregame" in status_tokens
-            or "pre" in status_tokens
-            or ("in" in status_tokens and "progress" in status_tokens)
-        ):
-            is_final = False
-        else:
-            is_final = score_complete
+        is_final = _is_final_status(status_raw, bool(score_complete))
 
         winner = None
         if is_final:
@@ -191,9 +291,13 @@ def build_actual_results_by_week(hist_df):
             else:
                 winner = "TIE"
 
+        matchup = normalize_matchup(f"{away_team} @ {home_team}")
+        if not matchup:
+            continue
+
         rows.append({
             "week": int(week),
-            "matchup": f"{away_team} @ {home_team}",
+            "matchup": matchup,
             "winner": winner,
             "is_final": bool(is_final),
         })
@@ -203,23 +307,14 @@ def build_actual_results_by_week(hist_df):
     return pd.DataFrame(rows, columns=cols).drop_duplicates(subset=["week", "matchup"], keep="last")
 
 
-def grade_picks(saved_picks_df, results_df):
+def grade_picks(saved_picks_df: pd.DataFrame, results_df: pd.DataFrame | None) -> pd.DataFrame:
     graded_cols = ["week", "matchup", "pick", "timestamp", "winner", "is_final", "status", "result"]
     if saved_picks_df is None or saved_picks_df.empty:
         return pd.DataFrame(columns=graded_cols)
 
-    picks = saved_picks_df.copy()
-    for col in ["week", "matchup", "pick", "timestamp"]:
-        if col not in picks.columns:
-            picks[col] = np.nan
-
-    picks["week"] = pd.to_numeric(picks["week"], errors="coerce")
-    picks = picks.dropna(subset=["week", "matchup", "pick"])
+    picks = _normalize_saved_picks_frame(saved_picks_df, drop_invalid=True)
     if picks.empty:
         return pd.DataFrame(columns=graded_cols)
-
-    picks["week"] = picks["week"].astype(int)
-    picks["pick"] = picks["pick"].apply(map_team_name)
 
     if results_df is None or results_df.empty:
         merged = picks.copy()
@@ -228,6 +323,16 @@ def grade_picks(saved_picks_df, results_df):
     else:
         results = results_df.copy()
         results["week"] = pd.to_numeric(results["week"], errors="coerce")
+        results = results.dropna(subset=["week", "matchup"])
+        results["matchup"] = results["matchup"].apply(normalize_matchup)
+        if "winner" in results.columns:
+            results["winner"] = results["winner"].apply(
+                lambda winner: "TIE" if winner == "TIE" else _normalize_team_name(winner)
+            )
+        else:
+            results["winner"] = None
+        if "is_final" not in results.columns:
+            results["is_final"] = False
         results = results.dropna(subset=["week", "matchup"])
         results["week"] = results["week"].astype(int)
         merged = picks.merge(results[["week", "matchup", "winner", "is_final"]], on=["week", "matchup"], how="left")
@@ -264,4 +369,3 @@ __all__ = [
     "build_actual_results_by_week",
     "grade_picks",
 ]
-
