@@ -8,6 +8,7 @@ import numpy as np
 from streamlit_autorefresh import st_autorefresh
 from collections import defaultdict
 from contextlib import contextmanager
+import logging
 import os, base64, requests, datetime, pytz, math, time, html
 from pathlib import Path
 from typing import Optional
@@ -28,11 +29,14 @@ LOGOS_DIR = APP_DIR / "Logos"
 SHIELD_IMAGE_PATH = APP_DIR / "Shield.png"
 NFL_IMAGE_PATH = APP_DIR / "NFL.png"
 
-EXCEL_FILE = "games.xlsx"
+EXCEL_FILE = str(APP_DIR / "games.xlsx")
 HIST_SHEET = "games"
 SCHEDULE_SHEET = "2025 schedule"
+PICKS_COLUMNS = ["week", "matchup", "pick", "timestamp"]
 
 DEFAULT_BANKROLL = 50
+
+logger = logging.getLogger(__name__)
 
 NFL_FULL_NAMES = {
     "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
@@ -189,12 +193,17 @@ def update_ratings(elo_ratings, team1, team2, score1, score2, home_team):
     expected1 = expected_score(r1, r2)
     if score1 > score2:
         actual1 = 1.0
+        winner_rating, loser_rating = r1, r2
     elif score2 > score1:
         actual1 = 0.0
+        winner_rating, loser_rating = r2, r1
     else:
         actual1 = 0.5
+        winner_rating, loser_rating = max(r1, r2), min(r1, r2)
     margin = max(abs(score1 - score2), 1.0)
-    mov_mult = np.log(margin + 1) * (2.2 / ((r1 - r2) * 0.001 + 2.2))
+    rating_gap = winner_rating - loser_rating
+    mov_denominator = max(2.2 + (rating_gap * 0.001), 0.1)
+    mov_mult = np.log(margin + 1) * (2.2 / mov_denominator)
     elo_ratings[team1] += K * mov_mult * (actual1 - expected1)
     elo_ratings[team2] += K * mov_mult * ((1 - actual1) - (1 - expected1))
 
@@ -271,7 +280,7 @@ def _parse_utc_iso(ts: str):
         if ts.endswith("Z"):
             ts = ts.replace("Z", "+00:00")
         return datetime.datetime.fromisoformat(ts)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return None
 
 def _fmt_sched_time(dt_utc, tz_name="US/Eastern"):
@@ -288,10 +297,10 @@ def fetch_nfl_scores():
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
     try:
         resp = requests.get(url, timeout=8)
-        if resp.status_code != 200:
-            return []
+        resp.raise_for_status()
         data = resp.json()
-    except Exception:
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Failed to fetch NFL scoreboard data: %s", exc)
         return []
 
     games = []
@@ -344,8 +353,11 @@ def fetch_injuries_espn(team_abbr):
         return []
     url = f"https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/teams/{team_id}/injuries"
     try:
-        r = requests.get(url, timeout=6); r.raise_for_status(); data = r.json()
-    except Exception:
+        response = requests.get(url, timeout=6)
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Failed to fetch injuries for %s: %s", team_abbr, exc)
         return []
     players = []
     for e in data.get("entries", []):
@@ -355,6 +367,13 @@ def fetch_injuries_espn(team_abbr):
             "status": e.get("status",{}).get("type","")
         })
     return players
+
+@st.cache_data(ttl=INJURY_CACHE_TTL_SECONDS)
+def fetch_all_injuries():
+    return {
+        abbr: fetch_injuries_espn(abbr)
+        for abbr in ESPN_TEAM_IDS
+    }
 
 def injury_adjustment(players):
     penalty = 0
@@ -657,18 +676,41 @@ def weather_adjustment(weather):
         return 0
     pen = 0
     try:
-        if weather.get("wind_speed", 0) > 20: pen -= 2
-        if (weather.get("condition","").lower()) in ["rain","snow"]: pen -= 3
-        if weather.get("temp", 100) < 25: pen -= 1
-    except Exception:
-        return 0
+        wind_speed = float(weather.get("wind_speed", 0) or 0)
+    except (TypeError, ValueError):
+        wind_speed = 0
+    try:
+        temp = float(weather.get("temp", 100) or 100)
+    except (TypeError, ValueError):
+        temp = 100
+    condition = str(weather.get("condition", "") or "").lower()
+    if wind_speed > 20:
+        pen -= 2
+    if condition in ["rain", "snow"]:
+        pen -= 3
+    if temp < 25:
+        pen -= 1
     return pen
+
+def apply_game_weather_adjustment(home_rating, away_rating, weather):
+    """Apply adverse-weather uncertainty once at the game level.
+
+    Bad weather is modeled conservatively by shaving a few Elo points from the
+    pregame favorite only. That makes forecasts slightly less confident without
+    double-counting the same stadium weather for both teams.
+    """
+    weather_penalty = weather_adjustment(weather)
+    if weather_penalty >= 0:
+        return home_rating, away_rating
+    if home_rating >= away_rating:
+        return home_rating + weather_penalty, away_rating
+    return home_rating, away_rating + weather_penalty
 
 def default_kickoff_unix(game_date):
     if isinstance(game_date, str):
         try:
             game_date = datetime.datetime.strptime(game_date, "%Y-%m-%d")
-        except Exception:
+        except ValueError:
             return 0
     elif not isinstance(game_date, datetime.datetime):
         return 0
@@ -776,19 +818,18 @@ def load_saved_picks(file=EXCEL_FILE):
     return _read_saved_picks_from_excel(file)
 
 def _read_saved_picks_from_excel(file=EXCEL_FILE):
-    columns = ["week", "matchup", "pick", "timestamp"]
     if not os.path.exists(file):
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(columns=PICKS_COLUMNS)
     try:
         df = pd.read_excel(file, sheet_name="Picks")
     except ValueError as e:
         if "Worksheet named 'Picks' not found" in str(e):
-            return pd.DataFrame(columns=columns)
+            return pd.DataFrame(columns=PICKS_COLUMNS)
         raise
-    for col in columns:
+    for col in PICKS_COLUMNS:
         if col not in df.columns:
             df[col] = np.nan
-    return df[columns]
+    return df[PICKS_COLUMNS]
 
 def _write_picks_sheet(file, picks_df, columns):
     if os.path.exists(file):
@@ -841,10 +882,9 @@ def picks_file_lock(file):
             os.rmdir(lock_dir)
 
 def save_week_picks(week, picks_dict, file=EXCEL_FILE):
-    columns = ["week", "matchup", "pick", "timestamp"]
     try:
         week_int = int(week)
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
     rows = []
@@ -864,7 +904,7 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
     if not rows:
         return False
 
-    new_rows = pd.DataFrame(rows, columns=columns)
+    new_rows = pd.DataFrame(rows, columns=PICKS_COLUMNS)
 
     def _save_once():
         existing = _read_saved_picks_from_excel(file).copy()
@@ -879,9 +919,9 @@ def save_week_picks(week, picks_dict, file=EXCEL_FILE):
                 (existing["matchup"].isin(new_rows["matchup"]))
             )]
 
-        out = pd.concat([existing[columns], new_rows], ignore_index=True)
+        out = pd.concat([existing[PICKS_COLUMNS], new_rows], ignore_index=True)
         out = out.drop_duplicates(subset=["week", "matchup"], keep="last")
-        _write_picks_sheet(file, out, columns)
+        _write_picks_sheet(file, out, PICKS_COLUMNS)
 
     with picks_file_lock(file):
         _save_once()
@@ -906,25 +946,11 @@ def build_actual_results_by_week(hist_df):
         score2 = pd.to_numeric(row.get("score2"), errors="coerce")
         score_complete = pd.notna(score1) and pd.notna(score2)
         status_raw = row.get("status", row.get("game_status", row.get("state", None)))
-        status_text = str(status_raw).strip().lower() if pd.notna(status_raw) else ""
-        normalized_status = " ".join(status_text.replace("-", " ").replace("/", " ").split())
-        status_tokens = set(normalized_status.split()) if normalized_status else set()
-        if "postponed" in status_tokens:
-            is_final = False
-        elif "final" in status_tokens or {"complete", "completed"} & status_tokens or normalized_status == "post":
-            is_final = True
-        elif (
-            normalized_status.startswith("q")
-            or "live" in status_tokens
-            or "halftime" in status_tokens
-            or "scheduled" in status_tokens
-            or "pregame" in status_tokens
-            or "pre" in status_tokens
-            or ("in" in status_tokens and "progress" in status_tokens)
-        ):
-            is_final = False
-        else:
+        status_eval = _is_final_status(status_raw)
+        if status_eval is None:
             is_final = score_complete
+        else:
+            is_final = bool(status_eval and score_complete)
         winner = None
         if is_final:
             if score1 > score2:
@@ -1099,402 +1125,414 @@ def compute_detailed_accuracy(hist_df: pd.DataFrame, elo_ratings=None):
 
 ### ---------- LOAD GAMES (cached) ----------
 @st.cache_data(ttl=600)
-def load_games(file=EXCEL_FILE):
+def load_games(file=EXCEL_FILE, file_mtime=None):
     if os.path.exists(file):
         try:
             hist_df = pd.read_excel(file, sheet_name=HIST_SHEET)
-        except Exception:
+        except ValueError as exc:
+            if f"Worksheet named '{HIST_SHEET}' not found" in str(exc):
+                hist_df = pd.DataFrame()
+            else:
+                logger.warning("Failed to load %s sheet from %s: %s", HIST_SHEET, file, exc)
+                hist_df = pd.DataFrame()
+        except (FileNotFoundError, OSError) as exc:
+            logger.warning("Failed to read %s: %s", file, exc)
             hist_df = pd.DataFrame()
         try:
             sched_df = pd.read_excel(file, sheet_name=SCHEDULE_SHEET)
-        except Exception:
+        except ValueError as exc:
+            if f"Worksheet named '{SCHEDULE_SHEET}' not found" in str(exc):
+                sched_df = pd.DataFrame()
+            else:
+                logger.warning("Failed to load %s sheet from %s: %s", SCHEDULE_SHEET, file, exc)
+                sched_df = pd.DataFrame()
+        except (FileNotFoundError, OSError) as exc:
+            logger.warning("Failed to read %s: %s", file, exc)
             sched_df = pd.DataFrame()
         return hist_df, sched_df
     return pd.DataFrame(), pd.DataFrame()
 
-# ---------- MAIN ----------
-nfl_header("NFL Elo Projections")
+def main():
+    nfl_header("NFL Elo Projections")
 
-st_autorefresh(interval=INJURY_CACHE_TTL_SECONDS * 1000, key="injury_data_autorefresh")
+    st_autorefresh(interval=INJURY_CACHE_TTL_SECONDS * 1000, key="injury_data_autorefresh")
 
-# Sidebar global settings
-st.sidebar.header("Bankroll / Settings")
-bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1.0, value=float(DEFAULT_BANKROLL), step=1.0, format="%.2f")
-st.sidebar.markdown("**Kelly stakes use the bankroll value above.**")
-if st.sidebar.button("Refresh Injury Data", use_container_width=True):
-    fetch_injuries_espn.clear()
-    st.rerun()
-st.sidebar.caption("Injury data refreshes automatically about every 10 minutes.")
+    st.sidebar.header("Bankroll / Settings")
+    bankroll = st.sidebar.number_input("Bankroll ($)", min_value=1.0, value=float(DEFAULT_BANKROLL), step=1.0, format="%.2f")
+    st.sidebar.markdown("**Kelly stakes use the bankroll value above.**")
+    if st.sidebar.button("Refresh Injury Data", use_container_width=True):
+        fetch_injuries_espn.clear()
+        fetch_all_injuries.clear()
+        st.rerun()
+    st.sidebar.caption("Injury data refreshes automatically about every 10 minutes.")
 
-hist_df, sched_df = load_games()
-ratings = run_elo_pipeline(hist_df) if not hist_df.empty else {}
-acc_stats = compute_detailed_accuracy(hist_df, ratings) if not hist_df.empty else {
-    "overall_accuracy":0,"brier_score":1.0,"per_team_accuracy":{}, "weekly_accuracy":{}, "home_accuracy":0, "away_accuracy":0
-}
+    file_mtime = os.path.getmtime(EXCEL_FILE) if os.path.exists(EXCEL_FILE) else None
+    hist_df, sched_df = load_games(EXCEL_FILE, file_mtime)
+    all_injuries = fetch_all_injuries()
+    ratings = run_elo_pipeline(hist_df) if not hist_df.empty else {}
+    acc_stats = compute_detailed_accuracy(hist_df, ratings) if not hist_df.empty else {
+        "overall_accuracy": 0, "brier_score": 1.0, "per_team_accuracy": {}, "weekly_accuracy": {}, "home_accuracy": 0, "away_accuracy": 0
+    }
 
-# Show some analytics in sidebar
-with st.sidebar.expander("Prediction Accuracy"):
-    st.metric("Overall Win %", f"{acc_stats['overall_accuracy']:.1%}")
-    st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
-    st.metric("Home Win Accuracy", f"{acc_stats['home_accuracy']:.1%}")
-    st.metric("Away Win Accuracy", f"{acc_stats['away_accuracy']:.1%}")
+    with st.sidebar.expander("Prediction Accuracy"):
+        st.metric("Overall Win %", f"{acc_stats['overall_accuracy']:.1%}")
+        st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
+        st.metric("Home-Pick Accuracy", f"{acc_stats['home_accuracy']:.1%}")
+        st.metric("Away-Pick Accuracy", f"{acc_stats['away_accuracy']:.1%}")
 
-# Tabs
-tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard", "Prediction Accuracy"])
+    tabs = st.tabs(["Matchups", "Power Rankings", "Pick Winners", "Scoreboard", "Prediction Accuracy"])
 
-# --- Matchups Tab ---
-with tabs[0]:
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.header("Matchups — Predictions & Kelly Stakes")
-    if sched_df.empty:
-        st.warning("Schedule not found in Excel.")
-    else:
-        available_weeks, week_series_num = get_available_weeks(sched_df)
-        if not available_weeks:
-            st.warning("No valid weeks found in schedule.")
+    with tabs[0]:
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.header("Matchups — Predictions & Kelly Stakes")
+        if sched_df.empty:
+            st.warning("Schedule not found in Excel.")
         else:
-            selected_week = st.selectbox("Select Week", options=available_weeks, index=max(0,len(available_weeks)-1), key="week_matchups")
-            mask = (week_series_num == selected_week)
-            week_games = sched_df.loc[mask.fillna(False)]
-            for _, row in week_games.iterrows():
-                team_home = map_team_name(row.get("team2"))
-                team_away = map_team_name(row.get("team1"))
-                abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
+            available_weeks, week_series_num = get_available_weeks(sched_df)
+            if not available_weeks:
+                st.warning("No valid weeks found in schedule.")
+            else:
+                selected_week = st.selectbox("Select Week", options=available_weeks, index=max(0,len(available_weeks)-1), key="week_matchups")
+                mask = (week_series_num == selected_week)
+                week_games = sched_df.loc[mask.fillna(False)]
+                for _, row in week_games.iterrows():
+                    team_home = map_team_name(row.get("team2"))
+                    team_away = map_team_name(row.get("team1"))
+                    abbr_home, abbr_away = get_abbr(team_home), get_abbr(team_away)
 
-                home_inj = fetch_injuries_espn(abbr_home) if abbr_home else []
-                away_inj = fetch_injuries_espn(abbr_away) if abbr_away else []
-                kickoff = default_kickoff_unix(row.get("date"))
-                weather = get_weather(team_home, kickoff)
+                    home_inj = all_injuries.get(abbr_home, []) if abbr_home else []
+                    away_inj = all_injuries.get(abbr_away, []) if abbr_away else []
+                    kickoff = default_kickoff_unix(row.get("date"))
+                    weather = get_weather(team_home, kickoff)
 
-                adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj) + weather_adjustment(weather)
-                adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj) + weather_adjustment(weather)
+                    adj_home = ratings.get(team_home, BASE_ELO) + injury_adjustment(home_inj)
+                    adj_away = ratings.get(team_away, BASE_ELO) + injury_adjustment(away_inj)
+                    adj_home, adj_away = apply_game_weather_adjustment(adj_home, adj_away, weather)
 
-                win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
-                win_prob_away = 1 - win_prob_home
+                    win_prob_home = expected_score(adj_home + HOME_ADVANTAGE, adj_away)
+                    win_prob_away = 1 - win_prob_home
 
-                col_odds1, col_odds2 = st.columns([1,1])
-                with col_odds1:
-                    odds_away = st.number_input(
-                        f"{team_away} Odds (decimal)",
-                        min_value=1.01, value=2.0, step=0.01,
-                        key=f"odds_away_{team_away}_{team_home}"
+                    col_odds1, col_odds2 = st.columns([1,1])
+                    with col_odds1:
+                        odds_away = st.number_input(
+                            f"{team_away} Odds (decimal)",
+                            min_value=1.01, value=2.0, step=0.01,
+                            key=f"odds_away_{team_away}_{team_home}"
+                        )
+                    with col_odds2:
+                        odds_home = st.number_input(
+                            f"{team_home} Odds (decimal)",
+                            min_value=1.01, value=2.0, step=0.01,
+                            key=f"odds_home_{team_home}_{team_away}"
+                        )
+
+                    kelly_home = kelly_fraction(win_prob_home, odds_home)
+                    kelly_away = kelly_fraction(win_prob_away, odds_away)
+                    stake_home = kelly_home * bankroll
+                    stake_away = kelly_away * bankroll
+
+                    NFL_AVG_TOTALS, overall_avg = get_total_points_baselines(hist_df)
+                    season_val = row.get("season")
+                    try:
+                        season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
+                    except (TypeError, ValueError):
+                        season_int = max(NFL_AVG_TOTALS.keys(), default=2025)
+                    total_pts = NFL_AVG_TOTALS.get(season_int, overall_avg)
+                    proj_home = int(round(win_prob_home * total_pts))
+                    proj_away = int(round(win_prob_away * total_pts))
+
+                    st.markdown(
+                        "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
+                        "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
+                        unsafe_allow_html=True
                     )
-                with col_odds2:
-                    odds_home = st.number_input(
-                        f"{team_home} Odds (decimal)",
-                        min_value=1.01, value=2.0, step=0.01,
-                        key=f"odds_home_{team_home}_{team_away}"
-                    )
 
-                kelly_home = kelly_fraction(win_prob_home, odds_home)
-                kelly_away = kelly_fraction(win_prob_away, odds_away)
-                stake_home = kelly_home * bankroll
-                stake_away = kelly_away * bankroll
+                    col1, col_mid, col2 = st.columns([2, 3, 2])
+                    with col1:
+                        safe_logo(abbr_away, 120)
+                        st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
+                        st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_away:.2f} — Kelly: {kelly_away:.2%} — Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
+                    with col_mid:
+                        st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
+                        st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
+                    with col2:
+                        safe_logo(abbr_home, 120)
+                        st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
+                        st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
 
-                # Projected score using season totals:
-                NFL_AVG_TOTALS, overall_avg = get_total_points_baselines(hist_df)
-                season_val = row.get("season")
+                    with st.expander("Weather Forecast 🌤️"):
+                        if weather:
+                            st.write(weather)
+                        else:
+                            st.caption("No forecast available.")
+
+                    with st.expander("Injuries 🩺"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.markdown(f"**{team_away}**")
+                            if away_inj:
+                                for p in away_inj:
+                                    st.write(p)
+                            else:
+                                st.caption("No reported injuries.")
+                        with c2:
+                            st.markdown(f"**{team_home}**")
+                            if home_inj:
+                                for p in home_inj:
+                                    st.write(p)
+                            else:
+                                st.caption("No reported injuries.")
+                    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with tabs[1]:
+        nfl_subheader("Elo Power Rankings", "📊")
+        adjusted_ratings = {}
+        for team_full in NFL_FULL_NAMES.values():
+            abbr = get_abbr(team_full)
+            base = ratings.get(team_full, BASE_ELO)
+            inj = all_injuries.get(abbr, []) if abbr else []
+            kickoff = default_kickoff_unix(datetime.datetime.now())
+            weather = get_weather(team_full, kickoff)
+            adj = base + injury_adjustment(inj) + weather_adjustment(weather)
+            adjusted_ratings[team_full] = adj
+
+        pr_df = (
+            pd.DataFrame(sorted(adjusted_ratings.items(), key=lambda x: x[1], reverse=True),
+                         columns=["Team", "Adj Elo"])
+            .reset_index(drop=True)
+        )
+        pr_df.index = pr_df.index + 1
+        pr_df.index.name = "Rank"
+
+        for rank, row in pr_df.iterrows():
+            team = row["Team"]
+            abbr = get_abbr(team)
+            elo_val = int(round(row["Adj Elo"]))
+            c1, c2, c3 = st.columns([1, 2, 2])
+            with c1:
+                st.markdown(f"**#{rank}**")
+            with c2:
+                safe_logo(abbr, 50)
+            with c3:
+                st.markdown(f"{neon_text(team, abbr, 20)} – **{elo_val}**", unsafe_allow_html=True)
+            st.markdown("---")
+
+    with tabs[2]:
+        nfl_subheader("Weekly Pick’em", "📝")
+        available_weeks, week_series_num = get_available_weeks(sched_df)
+        if available_weeks:
+            week = st.selectbox("Select Week", available_weeks, key="week_picks")
+            games = sched_df.loc[(week_series_num == week).fillna(False)]
+            try:
+                saved_picks_df = load_saved_picks()
+            except (ValueError, OSError) as exc:
+                logger.warning("Could not read saved picks: %s", exc)
+                saved_picks_df = pd.DataFrame(columns=PICKS_COLUMNS)
+                st.warning("Could not read saved picks. You can still make picks and save again.")
+            existing_week_picks = {}
+            if not saved_picks_df.empty:
+                week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)].copy()
+                if not week_saved.empty:
+                    week_saved["timestamp_dt"] = pd.to_datetime(week_saved["timestamp"], errors="coerce")
+                    week_saved["matchup"] = week_saved["matchup"].apply(normalize_matchup_value)
+                    week_saved["pick"] = week_saved["pick"].apply(map_team_name)
+                    week_saved = week_saved.sort_values("timestamp_dt").drop_duplicates(subset=["matchup"], keep="last")
+                    existing_week_picks = dict(zip(week_saved["matchup"], week_saved["pick"]))
+            picks = {}
+            for _, row in games.iterrows():
+                t_home, t_away = map_team_name(row.get("team2")), map_team_name(row.get("team1"))
+                abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
+                matchup_key = normalize_matchup_key(t_away, t_home)
+                default_pick = existing_week_picks.get(matchup_key)
+                options = [t_away, t_home]
+                default_index = options.index(default_pick) if default_pick in options else 0
+                st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
+                c1, c2, c3 = st.columns([3, 2, 3])
+                with c1:
+                    safe_logo(abbr_away, 80)
+                    st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
+                with c2:
+                    st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
+                with c3:
+                    safe_logo(abbr_home, 80)
+                    st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
+                choice = st.radio("Pick Winner", options, index=default_index, horizontal=True, key=f"pick_{week}_{t_home}_{t_away}", label_visibility="collapsed")
+                picks[matchup_key] = map_team_name(choice)
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            if st.button(f"Save Picks for Week {week}"):
                 try:
-                    season_int = int(season_val) if pd.notna(season_val) else max(NFL_AVG_TOTALS.keys(), default=2025)
-                except Exception:
-                    season_int = max(NFL_AVG_TOTALS.keys(), default=2025)
-                total_pts = NFL_AVG_TOTALS.get(season_int, overall_avg)
-                proj_home = int(round(win_prob_home * total_pts))
-                proj_away = int(round(win_prob_away * total_pts))
+                    if save_week_picks(week, picks):
+                        st.success(f"Picks saved for Week {week}. Re-save anytime to update your picks.")
+                    else:
+                        st.warning("No valid picks to save for this week.")
+                except (TimeoutError, OSError, ValueError) as exc:
+                    logger.warning("Failed to save picks for week %s: %s", week, exc)
+                    st.error("Failed to save picks. Please try again.")
+        else:
+            st.info("Schedule not available for picks.")
 
+    with tabs[3]:
+        nfl_subheader("NFL Scoreboard", "🏟️")
+        games = fetch_nfl_scores()
+        if not games:
+            st.info("No NFL games today or scheduled.")
+        for game in games:
+            away, home = game["away"], game["home"]
+            state = game.get("state", "pre")
+            comp = game.get("competition")
+            situation = comp.get("situation", {}) if comp else {}
+
+            status_obj = comp.get("status", {}) if comp else {}
+            period = status_obj.get("period")
+            clock = status_obj.get("displayClock", "")
+            if state == "in":
+                status_text = f"Q{period} {clock}"
+            elif state == "post":
+                status_text = "FINAL"
+            else:
+                status_text = game.get("status", "Scheduled")
+            safe_status_text = html.escape(str(status_text))
+
+            possession_id = situation.get("possession", {}).get("id")
+            last_play = situation.get("lastPlay", {}).get("text", "")
+            desc = situation.get("shortDownDistanceText")
+            yard_line = situation.get("yardLine")
+            drive_summary = f"{desc} on {yard_line}" if desc else None
+            safe_drive_summary = html.escape(str(drive_summary)) if drive_summary else None
+            safe_last_play = html.escape(str(last_play)) if last_play else None
+
+            score_home = int(home.get("score", 0))
+            score_away = int(away.get("score", 0))
+            highlight_home = state == "post" and score_home > score_away
+            highlight_away = state == "post" and score_away > score_home
+
+            st.markdown(
+                "<div style='background: #000000; backdrop-filter: blur(16px); border-radius:24px; "
+                "padding:20px; margin:16px 0; box-shadow:0 10px 30px rgba(0,0,0,0.5); "
+                "border:3px solid; border-image: linear-gradient(90deg, #d50a0a, #013369) 1;'>",
+                unsafe_allow_html=True
+            )
+
+            col1, col2, col3 = st.columns([3, 2, 3])
+            with col1:
+                logo_url = away.get("team", {}).get("logo")
+                if logo_url:
+                    st.image(logo_url, width=60)
+                team_abbr_away = get_abbr(away["team"]["displayName"])
+                st.markdown(f"<div style='text-align:center'>{neon_text(away['team']['displayName'], team_abbr_away, 22)}</div>", unsafe_allow_html=True)
+                score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
                 st.markdown(
-                    "<div style='background: rgba(255,255,255,0.12); backdrop-filter: blur(14px); "
-                    "border-radius: 24px; padding: 25px; margin: 22px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.25);'>",
+                    f"<h2 style='text-align:center; color:{score_color_away}; text-shadow:0 0 10px {score_color_away};'>"
+                    f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{score_away}</h2>",
                     unsafe_allow_html=True
                 )
 
-                col1, col_mid, col2 = st.columns([2, 3, 2])
-                with col1:
-                    safe_logo(abbr_away, 120)
-                    st.markdown(f"<div style='text-align:center'>{neon_text(team_away, abbr_away, 28)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_away:.1%}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_away:.2f} — Kelly: {kelly_away:.2%} — Stake: ${stake_away:.2f}</p>", unsafe_allow_html=True)
-                with col_mid:
-                    st.markdown(f"<h1 style='text-align:center; margin:0;'>{proj_away} – {proj_home}</h1>", unsafe_allow_html=True)
-                    st.markdown("<p style='text-align:center; margin:4px 0 0;'>Projected Score</p>", unsafe_allow_html=True)
-                with col2:
-                    safe_logo(abbr_home, 120)
-                    st.markdown(f"<div style='text-align:center'>{neon_text(team_home, abbr_home, 28)}</div>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='text-align:center; margin-top:6px;'>Win %: {win_prob_home:.1%}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='text-align:center; margin-top:2px;'>Odds: {odds_home:.2f} — Kelly: {kelly_home:.2%} — Stake: ${stake_home:.2f}</p>", unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"<h3 style='text-align:center; color:#e5e7eb;'>{safe_status_text}</h3>", unsafe_allow_html=True)
 
-                with st.expander("Weather Forecast 🌤️"):
-                    if weather:
-                        st.write(weather)
-                    else:
-                        st.caption("No forecast available.")
+            with col3:
+                logo_url = home.get("team", {}).get("logo")
+                if logo_url:
+                    st.image(logo_url, width=60)
+                team_abbr_home = get_abbr(home["team"]["displayName"])
+                st.markdown(f"<div style='text-align:center'>{neon_text(home['team']['displayName'], team_abbr_home, 22)}</div>", unsafe_allow_html=True)
+                score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
+                st.markdown(
+                    f"<h2 style='text-align:center; color:{score_color_home}; text-shadow:0 0 10px {score_color_home};'>"
+                    f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{score_home}</h2>",
+                    unsafe_allow_html=True
+                )
 
-                with st.expander("Injuries 🩺"):
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.markdown(f"**{team_away}**")
-                        if away_inj:
-                            for p in away_inj: st.write(p)
-                        else:
-                            st.caption("No reported injuries.")
-                    with c2:
-                        st.markdown(f"**{team_home}**")
-                        if home_inj:
-                            for p in home_inj: st.write(p)
-                        else:
-                            st.caption("No reported injuries.")
+            if drive_summary or last_play:
+                st.markdown(
+                    "<div style='background: rgba(20,20,20,0.7); border-radius:12px; padding:8px; "
+                    "margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center; text-shadow:0 0 4px #fff;'>",
+                    unsafe_allow_html=True
+                )
+                if safe_drive_summary:
+                    st.markdown(f"📋 {safe_drive_summary}", unsafe_allow_html=True)
+                if safe_last_play:
+                    st.markdown(f"📝 {safe_last_play}", unsafe_allow_html=True)
                 st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Power Rankings Tab ---
-with tabs[1]:
-    nfl_subheader("Elo Power Rankings", "📊")
-    adjusted_ratings = {}
-    for team_full in NFL_FULL_NAMES.values():
-        abbr = get_abbr(team_full)
-        base = ratings.get(team_full, BASE_ELO)
-        inj = fetch_injuries_espn(abbr) if abbr else []
-        kickoff = default_kickoff_unix(datetime.datetime.now())
-        weather = get_weather(team_full, kickoff)
-        adj = base + injury_adjustment(inj) + weather_adjustment(weather)
-        adjusted_ratings[team_full] = adj
-
-    pr_df = (
-        pd.DataFrame(sorted(adjusted_ratings.items(), key=lambda x: x[1], reverse=True),
-                     columns=["Team", "Adj Elo"])
-        .reset_index(drop=True)
-    )
-    pr_df.index = pr_df.index + 1
-    pr_df.index.name = "Rank"
-
-    for rank, row in pr_df.iterrows():
-        team = row["Team"]
-        abbr = get_abbr(team)
-        elo_val = int(round(row["Adj Elo"]))
-        c1, c2, c3 = st.columns([1, 2, 2])
-        with c1:
-            st.markdown(f"**#{rank}**")
-        with c2:
-            safe_logo(abbr, 50)
-        with c3:
-            st.markdown(f"{neon_text(team, abbr, 20)} – **{elo_val}**", unsafe_allow_html=True)
-        st.markdown("---")
-
-# --- Pick Winners Tab ---
-with tabs[2]:
-    nfl_subheader("Weekly Pick’em", "📝")
-    available_weeks, week_series_num = get_available_weeks(sched_df)
-    if available_weeks:
-        week = st.selectbox("Select Week", available_weeks, key="week_picks")
-        games = sched_df.loc[(week_series_num == week).fillna(False)]
-        try:
-            saved_picks_df = load_saved_picks()
-        except Exception:
-            saved_picks_df = pd.DataFrame(columns=["week", "matchup", "pick", "timestamp"])
-            st.warning("Could not read saved picks. You can still make picks and save again.")
-        existing_week_picks = {}
-        if not saved_picks_df.empty:
-            week_saved = saved_picks_df[pd.to_numeric(saved_picks_df["week"], errors="coerce") == int(week)].copy()
-            if not week_saved.empty:
-                week_saved["timestamp_dt"] = pd.to_datetime(week_saved["timestamp"], errors="coerce")
-                week_saved["matchup"] = week_saved["matchup"].apply(normalize_matchup_value)
-                week_saved["pick"] = week_saved["pick"].apply(map_team_name)
-                week_saved = week_saved.sort_values("timestamp_dt").drop_duplicates(subset=["matchup"], keep="last")
-                existing_week_picks = dict(zip(week_saved["matchup"], week_saved["pick"]))
-        picks = {}
-        for _, row in games.iterrows():
-            t_home, t_away = map_team_name(row.get("team2")), map_team_name(row.get("team1"))
-            abbr_home, abbr_away = get_abbr(t_home), get_abbr(t_away)
-            matchup_key = normalize_matchup_key(t_away, t_home)
-            default_pick = existing_week_picks.get(matchup_key)
-            options = [t_away, t_home]
-            default_index = options.index(default_pick) if default_pick in options else 0
-            st.markdown("<div style='background:rgba(255,255,255,0.08); border-radius:18px; padding:16px; margin:12px 0;'>", unsafe_allow_html=True)
-            c1, c2, c3 = st.columns([3, 2, 3])
-            with c1:
-                safe_logo(abbr_away, 80)
-                st.markdown(neon_text(t_away, abbr_away, 20), unsafe_allow_html=True)
-            with c2:
-                st.markdown("<h5 style='text-align:center'>Your Pick ➡️</h5>", unsafe_allow_html=True)
-            with c3:
-                safe_logo(abbr_home, 80)
-                st.markdown(neon_text(t_home, abbr_home, 20), unsafe_allow_html=True)
-            choice = st.radio("", options, index=default_index, horizontal=True, key=f"pick_{week}_{t_home}_{t_away}")
-            picks[matchup_key] = map_team_name(choice)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        if st.button(f"Save Picks for Week {week}"):
-            try:
-                if save_week_picks(week, picks):
-                    st.success(f"Picks saved for Week {week}. Re-save anytime to update your picks.")
-                else:
-                    st.warning("No valid picks to save for this week.")
-            except Exception as e:
-                st.error(f"Failed to save picks: {e}")
-    else:
-        st.info("Schedule not available for picks.")
+    with tabs[4]:
+        st.header("Prediction Accuracy")
+        st.markdown("Overall and breakdowns of Elo prediction performance on historical games.")
 
-# --- Scoreboard Tab ---
-with tabs[3]:
-    nfl_subheader("NFL Scoreboard", "🏟️")
-    games = fetch_nfl_scores()
-    if not games:
-        st.info("No NFL games today or scheduled.")
-    for game in games:
-        away, home = game["away"], game["home"]
-        state = game.get("state", "pre")
-        comp = game.get("competition")
-        situation = comp.get("situation", {}) if comp else {}
+        st.subheader("Key Metrics")
+        st.metric("Overall Win Accuracy", f"{acc_stats['overall_accuracy']:.1%}")
+        st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
 
-        status_obj = comp.get("status", {}) if comp else {}
-        period = status_obj.get("period")
-        clock = status_obj.get("displayClock", "")
-        if state == "in":
-            status_text = f"Q{period} {clock}"
-        elif state == "post":
-            status_text = "FINAL"
+        st.subheader("Home / Away Pick Accuracy")
+        st.write(f"Home-pick accuracy: {acc_stats['home_accuracy']:.1%}")
+        st.write(f"Away-pick accuracy: {acc_stats['away_accuracy']:.1%}")
+
+        st.subheader("Per-Team Accuracy")
+        per_team = acc_stats.get("per_team_accuracy", {})
+        if per_team:
+            per_team_df = pd.DataFrame.from_dict(per_team, orient="index", columns=["Accuracy"]).sort_values("Accuracy", ascending=False)
+            per_team_df.index.name = "Team"
+            st.dataframe(per_team_df.style.format({"Accuracy":"{:.1%}"}))
         else:
-            status_text = game.get("status", "Scheduled")
-        safe_status_text = html.escape(str(status_text))
+            st.info("No per-team accuracy data available.")
 
-        possession_id = situation.get("possession", {}).get("id")
-        last_play = situation.get("lastPlay", {}).get("text", "")
-        desc = situation.get("shortDownDistanceText")
-        yard_line = situation.get("yardLine")
-        drive_summary = f"{desc} on {yard_line}" if desc else None
-        safe_drive_summary = html.escape(str(drive_summary)) if drive_summary else None
-        safe_last_play = html.escape(str(last_play)) if last_play else None
+        st.subheader("Weekly Accuracy Trend")
+        weekly = acc_stats.get("weekly_accuracy", {})
+        if weekly:
+            weekly_df = pd.DataFrame.from_dict(weekly, orient="index", columns=["Accuracy"]).sort_index()
+            weekly_df.index.name = "Week"
+            st.line_chart(weekly_df)
+        else:
+            st.info("No weekly accuracy data available.")
 
-        score_home = int(home.get("score", 0))
-        score_away = int(away.get("score", 0))
-        highlight_home = state == "post" and score_home > score_away
-        highlight_away = state == "post" and score_away > score_home
+        st.subheader("Your Pick Results")
+        try:
+            saved_picks = load_saved_picks()
+        except (ValueError, OSError) as exc:
+            logger.warning("Could not read saved picks for review: %s", exc)
+            saved_picks = pd.DataFrame(columns=PICKS_COLUMNS)
+            st.warning("Could not read saved picks for review.")
+        actual_results = build_actual_results_by_week(hist_df)
+        graded_picks = grade_picks(saved_picks, actual_results)
 
-        st.markdown(
-            "<div style='background: #000000; backdrop-filter: blur(16px); border-radius:24px; "
-            "padding:20px; margin:16px 0; box-shadow:0 10px 30px rgba(0,0,0,0.5); "
-            "border:3px solid; border-image: linear-gradient(90deg, #d50a0a, #013369) 1;'>",
-            unsafe_allow_html=True
-        )
+        if graded_picks.empty:
+            st.info("No saved picks yet.")
+        else:
+            saved_weeks = sorted(graded_picks["week"].dropna().astype(int).unique().tolist())
+            review_week = st.selectbox(
+                "Select Week to Review",
+                options=saved_weeks,
+                index=max(0, len(saved_weeks) - 1),
+                key="review_pick_week"
+            )
+            week_results = graded_picks[graded_picks["week"] == review_week].copy()
 
-        col1, col2, col3 = st.columns([3, 2, 3])
-        with col1:
-            try:
-                logo_url = away['team'].get('logo')
-                if logo_url:
-                    st.image(logo_url, width=60)
-            except Exception:
-                pass
-            team_abbr_away = get_abbr(away['team']['displayName'])
-            st.markdown(f"<div style='text-align:center'>{neon_text(away['team']['displayName'], team_abbr_away, 22)}</div>", unsafe_allow_html=True)
-            score_color_away = TEAM_COLORS.get(team_abbr_away, "#39ff14") if highlight_away else "#FFFFFF"
+            week_wins = int((week_results["status"] == "correct").sum())
+            week_losses = int((week_results["status"] == "wrong").sum())
+            week_pending = int((week_results["status"] == "pending").sum())
+            week_pushes = int((week_results["status"] == "tie/push").sum())
+
             st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_away}; text-shadow:0 0 10px {score_color_away};'>"
-                f"{'🏈 ' if str(away['team'].get('id'))==str(possession_id) else ''}{score_away}</h2>",
-                unsafe_allow_html=True
+                f"**Week {review_week} Record:** {week_wins}-{week_losses}"
+                + (f" (Pending: {week_pending})" if week_pending else "")
+                + (f" (Pushes: {week_pushes})" if week_pushes else "")
             )
 
-        with col2:
-            st.markdown(f"<h3 style='text-align:center; color:#e5e7eb;'>{safe_status_text}</h3>", unsafe_allow_html=True)
+            season_final = graded_picks[graded_picks["status"].isin(["correct", "wrong"])]
+            season_wins = int((season_final["status"] == "correct").sum())
+            season_losses = int((season_final["status"] == "wrong").sum())
+            st.markdown(f"**Season Record (Finalized):** {season_wins}-{season_losses}")
 
-        with col3:
-            try:
-                logo_url = home['team'].get('logo')
-                if logo_url:
-                    st.image(logo_url, width=60)
-            except Exception:
-                pass
-            team_abbr_home = get_abbr(home['team']['displayName'])
-            st.markdown(f"<div style='text-align:center'>{neon_text(home['team']['displayName'], team_abbr_home, 22)}</div>", unsafe_allow_html=True)
-            score_color_home = TEAM_COLORS.get(team_abbr_home, "#39ff14") if highlight_home else "#FFFFFF"
-            st.markdown(
-                f"<h2 style='text-align:center; color:{score_color_home}; text-shadow:0 0 10px {score_color_home};'>"
-                f"{'🏈 ' if str(home['team'].get('id'))==str(possession_id) else ''}{score_home}</h2>",
-                unsafe_allow_html=True
-            )
+            display_df = week_results[["matchup", "pick", "winner", "result"]].copy()
+            display_df["winner"] = display_df["winner"].fillna("Pending")
+            st.dataframe(display_df, use_container_width=True)
 
-        if drive_summary or last_play:
-            st.markdown(
-                "<div style='background: rgba(20,20,20,0.7); border-radius:12px; padding:8px; "
-                "margin-top:10px; color:#e5e7eb; font-size:12px; text-align:center; text-shadow:0 0 4px #fff;'>",
-                unsafe_allow_html=True
-            )
-            if safe_drive_summary:
-                st.markdown(f"📋 {safe_drive_summary}", unsafe_allow_html=True)
-            if safe_last_play:
-                st.markdown(f"📝 {safe_last_play}", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
-
-# --- Prediction Accuracy Tab ---
-with tabs[4]:
-    st.header("Prediction Accuracy")
-    st.markdown("Overall and breakdowns of Elo prediction performance on historical games.")
-
-    st.subheader("Key Metrics")
-    st.metric("Overall Win Accuracy", f"{acc_stats['overall_accuracy']:.1%}")
-    st.metric("Brier Score", f"{acc_stats['brier_score']:.4f}")
-
-    st.subheader("Home / Away Accuracy")
-    st.write(f"Home accuracy: {acc_stats['home_accuracy']:.1%}")
-    st.write(f"Away accuracy: {acc_stats['away_accuracy']:.1%}")
-
-    st.subheader("Per-Team Accuracy")
-    per_team = acc_stats.get("per_team_accuracy", {})
-    if per_team:
-        per_team_df = pd.DataFrame.from_dict(per_team, orient="index", columns=["Accuracy"]).sort_values("Accuracy", ascending=False)
-        per_team_df.index.name = "Team"
-        st.dataframe(per_team_df.style.format({"Accuracy":"{:.1%}"}))
-    else:
-        st.info("No per-team accuracy data available.")
-
-    st.subheader("Weekly Accuracy Trend")
-    weekly = acc_stats.get("weekly_accuracy", {})
-    if weekly:
-        weekly_df = pd.DataFrame.from_dict(weekly, orient="index", columns=["Accuracy"]).sort_index()
-        weekly_df.index.name = "Week"
-        st.line_chart(weekly_df)
-    else:
-        st.info("No weekly accuracy data available.")
-
-    st.subheader("Your Pick Results")
-    try:
-        saved_picks = load_saved_picks()
-    except Exception:
-        saved_picks = pd.DataFrame(columns=["week", "matchup", "pick", "timestamp"])
-        st.warning("Could not read saved picks for review.")
-    actual_results = build_actual_results_by_week(hist_df)
-    graded_picks = grade_picks(saved_picks, actual_results)
-
-    if graded_picks.empty:
-        st.info("No saved picks yet.")
-    else:
-        saved_weeks = sorted(graded_picks["week"].dropna().astype(int).unique().tolist())
-        review_week = st.selectbox(
-            "Select Week to Review",
-            options=saved_weeks,
-            index=max(0, len(saved_weeks) - 1),
-            key="review_pick_week"
-        )
-        week_results = graded_picks[graded_picks["week"] == review_week].copy()
-
-        week_wins = int((week_results["status"] == "correct").sum())
-        week_losses = int((week_results["status"] == "wrong").sum())
-        week_pending = int((week_results["status"] == "pending").sum())
-        week_pushes = int((week_results["status"] == "tie/push").sum())
-
-        st.markdown(
-            f"**Week {review_week} Record:** {week_wins}-{week_losses}"
-            + (f" (Pending: {week_pending})" if week_pending else "")
-            + (f" (Pushes: {week_pushes})" if week_pushes else "")
-        )
-
-        season_final = graded_picks[graded_picks["status"].isin(["correct", "wrong"])]
-        season_wins = int((season_final["status"] == "correct").sum())
-        season_losses = int((season_final["status"] == "wrong").sum())
-        st.markdown(f"**Season Record (Finalized):** {season_wins}-{season_losses}")
-
-        display_df = week_results[["matchup", "pick", "winner", "result"]].copy()
-        display_df["winner"] = display_df["winner"].fillna("Pending")
-        st.dataframe(display_df, use_container_width=True)
+if os.getenv("DRATINGS_SKIP_APP_MAIN") != "1":
+    main()
