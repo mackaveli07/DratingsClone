@@ -231,7 +231,7 @@ def _prepare_final_games(df: pd.DataFrame) -> pd.DataFrame:
     status_col = next((c for c in ["status", "game_status", "state"] if c in games.columns), None)
     if status_col:
         status_eval = games[status_col].apply(_is_final_status)
-        games = games[status_eval != False]
+        games = games[status_eval == True]
 
     games["season"] = games["season"].astype(int)
     games["week"] = games["week"].astype(int)
@@ -594,16 +594,16 @@ STADIUMS = {
 OWM_API_KEY = os.getenv("OWM_API_KEY", "")
 
 @st.cache_data(ttl=600)
-def get_weather(team: str, kickoff_unix: int):
+def _get_weather_cached(team: str, kickoff_unix: int, api_key: str):
     """Fetch cached weather near kickoff for the given home team."""
-    if team not in STADIUMS or not OWM_API_KEY:
+    if team not in STADIUMS or not api_key:
         return None
     try:
         kickoff_unix = int(kickoff_unix)
     except (TypeError, ValueError):
         return None
     lat, lon = STADIUMS[team]["lat"], STADIUMS[team]["lon"]
-    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=imperial"
+    url = f"https://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={api_key}&units=imperial"
     try:
         resp = requests.get(
             url,
@@ -640,6 +640,10 @@ def get_weather(team: str, kickoff_unix: int):
         }
     except (KeyError, TypeError, ValueError, IndexError):
         return None
+
+def get_weather(team: str, kickoff_unix: int):
+    """Public weather helper with cache isolation by API key."""
+    return _get_weather_cached(team, kickoff_unix, OWM_API_KEY)
 
 def weather_adjustment(weather):
     if not weather:
